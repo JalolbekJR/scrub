@@ -14,15 +14,20 @@ Remove faces, private text, and hidden metadata from images and PDFs — in your
 
 Photos carry more than what's visible. GPS coordinates, device model and serial, timestamps, sometimes a thumbnail of the original before you cropped it. Files can also carry hidden archives, scripts, or text designed to trick AI tools.
 
-Scrub finds all of it, shows you what was found (categories only — never the actual values), lets you choose what to remove, then exports a re-encoded file with zero metadata.
+Scrub finds it, shows you what was found (categories only — never the actual values), lets you choose what to remove, then exports a re-encoded file with the metadata stripped.
 
-Detects and removes:
-- Faces (MediaPipe BlazeFace)
-- Emails, phone numbers, card numbers, names (Tesseract OCR)
+Detects:
+- Faces (MediaPipe BlazeFace, tiled detection for crowded images)
+- Emails, phone numbers, card numbers (Tesseract OCR, English)
+- Titled names like "Dr Brown" (plain names need a manual box)
 - Hidden metadata — GPS, device info, timestamps, color profiles, embedded thumbnails
 - Threat payloads — hidden ZIPs, scripts, executables, AI prompt-injection text
 
-After export, re-parses the output and confirms zero metadata remains before download.
+No detector is perfect, so you can **draw your own redaction boxes** over anything the scan misses, and remove any box you don't want.
+
+Before the download is offered, the exported file is **verified**: images are re-parsed for residual metadata and trailing bytes; PDFs are scanned for scripts, embedded files, leftover document metadata, and appended data. The "verified clean" badge reflects that real check.
+
+> **Status: beta.** It does what it says and verifies its own output, but treat it as a strong privacy aid, not a certified sanitizer. See [SECURITY.md](./SECURITY.md) for the threat model and honest limitations (English-only OCR, remote model/OCR/font assets, detector recall).
 
 ---
 

@@ -141,7 +141,7 @@ async function loadPdf(file: File, gen: number) {
 export async function handleFile(file: File) {
   if (busy) return;
 
-  const v = validateFile(file);
+  const v = await validateFile(file);
   if (!v.ok) { setError(v.reason ?? 'Unsupported file.'); return; }
 
   busy = true;

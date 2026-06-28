@@ -311,6 +311,65 @@ canvas {
   letter-spacing: 0.05em;
 }
 
+.detection-box.manual { border-style: solid; border-color: #2BB673; }
+.detection-box.manual .detection-box-label { background: #2BB673; }
+
+.detection-box.draft {
+  border-style: solid;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  animation: none;
+}
+
+.detection-box-del {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: #1E1B33;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}
+.detection-box-del:hover { background: #C0392B; }
+
+.overlay-wrap.drawing { pointer-events: auto; cursor: crosshair; }
+
+.manual-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.btn-draw {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.btn-draw:hover { border-color: var(--accent); color: var(--accent); }
+.btn-draw.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.manual-hint { font-size: 12px; color: var(--text-muted); }
+
 @keyframes box-in {
   from { opacity: 0; transform: scale(0.92); }
   to   { opacity: 1; transform: scale(1); }

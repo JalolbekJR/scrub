@@ -5,6 +5,13 @@ interface WordResult {
   bbox: { x0: number; y0: number; x1: number; y1: number };
 }
 
+// Shape of the slice of tesseract's result we walk (its types don't expose blocks).
+interface OcrWord { text?: string; bbox?: { x0: number; y0: number; x1: number; y1: number }; }
+interface OcrLine { words?: OcrWord[]; }
+interface OcrPara { lines?: OcrLine[]; }
+interface OcrBlock { paragraphs?: OcrPara[]; }
+interface OcrData { blocks?: OcrBlock[]; }
+
 let ocrWorker: Awaited<ReturnType<typeof createWorker>> | null = null;
 
 async function getOcrWorker() {
@@ -38,19 +45,13 @@ self.onmessage = async (e: MessageEvent<{ imageData: ImageData; width: number; h
     const { data } = await worker.recognize(blob, {}, { blocks: true, text: true });
 
     const words: WordResult[] = [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const block of ((data as any).blocks ?? [])) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const blocks = (data as unknown as OcrData).blocks ?? [];
+    for (const block of blocks) {
       for (const para of (block.paragraphs ?? [])) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         for (const line of (para.lines ?? [])) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           for (const w of (line.words ?? [])) {
             if (w && w.text && w.bbox) {
-              words.push({
-                text: w.text as string,
-                bbox: w.bbox as { x0: number; y0: number; x1: number; y1: number },
-              });
+              words.push({ text: w.text, bbox: w.bbox });
             }
           }
         }

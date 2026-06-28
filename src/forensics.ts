@@ -286,7 +286,15 @@ export async function stripJpegMetadata(blob: Blob): Promise<Blob> {
 }
 
 // ── Post-export verification ──────────────────────────────────────────────────
-export async function verifyClean(blob: Blob): Promise<{ clean: boolean; residualFields: number; trailingBytes: number }> {
+export interface VerifyResult {
+  clean: boolean;
+  residualFields: number;
+  trailingBytes: number;
+  // Active-content / threat tokens still present (PDF only); always empty for images.
+  threats: string[];
+}
+
+export async function verifyClean(blob: Blob): Promise<VerifyResult> {
   let residualFields = 0;
   try {
     const parsed = await exifr.parse(blob, { tiff: true, exif: true, gps: true, iptc: true, xmp: true, icc: true });
@@ -294,5 +302,39 @@ export async function verifyClean(blob: Blob): Promise<{ clean: boolean; residua
   } catch { residualFields = 0; }
   const bytes = new Uint8Array(await blob.arrayBuffer());
   const trailingBytes = computeTrailing(bytes, blob.type || 'image/jpeg');
-  return { clean: residualFields === 0 && trailingBytes <= 2, residualFields, trailingBytes };
+  return { clean: residualFields === 0 && trailingBytes <= 2, residualFields, trailingBytes, threats: [] };
+}
+
+// Active-content constructs that must never appear in a sanitised PDF.
+const PDF_THREAT_TOKENS = ['/JavaScript', '/JS', '/OpenAction', '/AA', '/Launch', '/EmbeddedFile', '/RichMedia', '/AcroForm', '/GoToR'];
+// Info-dictionary fields that would carry user-identifying text.
+const PDF_META_RE = /\/(Author|Title|Subject|Keywords|Creator)\s*\(([^)]*)\)/g;
+
+// Real structural verification of an exported PDF: confirms the bytes carry no
+// scripts, embedded files, forms, user metadata, XMP packet, or trailing junk.
+// (Producer / CreationDate written by the generator carry no user data and are
+// not treated as leaks.)
+export async function verifyCleanPdf(blob: Blob): Promise<VerifyResult> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const text = bytesToLatin1(bytes);
+
+  const threats = PDF_THREAT_TOKENS.filter((t) => text.includes(t));
+
+  let residualFields = 0;
+  for (const m of text.matchAll(PDF_META_RE)) {
+    if ((m[2] ?? '').trim().length > 0) residualFields++;
+  }
+  if (text.includes('<?xpacket') || text.includes('<x:xmpmeta')) residualFields++;
+
+  // Anything after the final %%EOF is appended/trailing data.
+  const eofSeq = [0x25, 0x25, 0x45, 0x4f, 0x46]; // %%EOF
+  const eof = lastIndexOfSeq(bytes, eofSeq);
+  const trailingBytes = eof >= 0 ? Math.max(0, bytes.length - (eof + eofSeq.length) - 2) : bytes.length;
+
+  return {
+    clean: threats.length === 0 && residualFields === 0 && trailingBytes <= 4,
+    residualFields,
+    trailingBytes: Math.max(0, trailingBytes),
+    threats,
+  };
 }

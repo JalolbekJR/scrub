@@ -5,7 +5,7 @@ export interface BoundingBox {
   height: number;
 }
 
-export type DetectionType = 'face' | 'email' | 'phone' | 'card' | 'name';
+export type DetectionType = 'face' | 'email' | 'phone' | 'card' | 'name' | 'manual';
 
 export interface Detection {
   type: DetectionType;

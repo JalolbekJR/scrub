@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 package-lock.json
+.claude/
 
 # Local test files (your private photos/PDFs) — never committed or deployed
 public/test/

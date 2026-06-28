@@ -1,12 +1,12 @@
 import './style.css';
 import { initTheme } from './theme';
 import { initUpload } from './upload';
-import { initExport, enableDownload, exportBatch, setPdfContext, storeRedactedPage } from './export';
+import { buildExport, triggerDownload, enableDownload, exportBatch, setPdfContext, storeRedactedPage, resetExportContext, type BuiltExport } from './export';
 import { detectFaces } from './detectors/face';
 import { detectPii } from './detectors/pii';
 import { redactAll } from './redactor';
 import { renderOverlay, clearOverlay, updateCountBadge } from './overlay';
-import { inspectFile, verifyClean, type ForensicReport, type Finding } from './forensics';
+import { inspectFile, verifyClean, verifyCleanPdf, type ForensicReport, type Finding, type VerifyResult } from './forensics';
 import { startScan, setPhase, phaseLog, updateOcrProgress, finishScan } from './scanner';
 import { celebrate } from './celebrate';
 import { initTicker } from './ticker';
@@ -43,7 +43,6 @@ initQueue(
 );
 
 initUpload((files) => enqueue(files));
-initExport();
 initTicker();
 
 const btnRedact  = document.getElementById('btnRedact')  as HTMLButtonElement;
@@ -62,7 +61,6 @@ let originalImageData: ImageData | null = null;
 let currentPageNum = 1;
 let currentIsPdf = false;
 let metaItemsFound = 0;
-let lastVerifiedClean = false;
 let forensicsGate: Promise<void> = Promise.resolve();
 let activeGen = 0;
 let currentFile: File | null = null;
@@ -94,9 +92,12 @@ document.addEventListener('file:loaded', async (e: Event) => {
   currentIsPdf = isPdf;
 
   resetView();
+  lastBuilt = null;
 
   if (isPdf && pdfDoc) {
     setPdfContext(pdfDoc, pageCount);
+  } else {
+    resetExportContext();
   }
 
   originalImageData = new ImageData(
@@ -158,7 +159,7 @@ document.addEventListener('file:loaded', async (e: Event) => {
   }
 
   dropZone.classList.remove('detecting');
-  renderOverlay(currentDetections);
+  refreshOverlay();
   finishScan();
 
   const counts: Array<[string, string]> = [
@@ -241,7 +242,7 @@ document.addEventListener('file:loaded', async (e: Event) => {
 
 // ── Redact button ─────────────────────────────────────────────────────────────
 
-btnRedact.addEventListener('click', () => {
+btnRedact.addEventListener('click', async () => {
   if (!currentCanvas || !originalImageData) return;
 
   const ctx = currentCanvas.getContext('2d')!;
@@ -264,20 +265,131 @@ btnRedact.addEventListener('click', () => {
   }
   showScrubber(originalImageData, currentCanvas);
 
-  enableDownload();
   btnRedact.classList.add('pulsed', 'done');
   setTimeout(() => btnRedact.classList.remove('pulsed', 'done'), 2000);
 
-  setStatus(`${toRedact.length} item${toRedact.length !== 1 ? 's' : ''} redacted — ready to download`, false, true);
+  // Build the final file and verify it BEFORE offering the download, so the
+  // success message reflects the actual exported bytes — not an assumption.
+  setStatus('Re-encoding & verifying the clean file…', true);
+  try {
+    lastBuilt = await buildExport();
+  } catch {
+    setStatus('Could not build the clean file. Please try again.', false);
+    return;
+  }
+  const result = lastBuilt.isPdf ? await verifyCleanPdf(lastBuilt.blob) : await verifyClean(lastBuilt.blob);
+  renderVerify(result);
+  enableDownload();
+
+  setStatus(
+    result.clean
+      ? `${toRedact.length} item${toRedact.length !== 1 ? 's' : ''} redacted · verified clean — ready to download`
+      : `${toRedact.length} redacted — verification flagged residual data (see panel)`,
+    false, true,
+  );
 
   const stripMeta = (document.getElementById('chkMetadata') as HTMLInputElement).checked;
   celebrate(
-    { redacted: toRedact.length, metaItems: stripMeta ? metaItemsFound : 0, verifiedClean: lastVerifiedClean || stripMeta },
-    () => btnDownload.click()
+    { redacted: toRedact.length, metaItems: stripMeta ? metaItemsFound : 0, verifiedClean: result.clean },
+    () => { void doDownload(); }
   );
 });
 
 const btnDownload = document.getElementById('btnDownload') as HTMLButtonElement;
+
+let lastBuilt: BuiltExport | null = null;
+
+async function doDownload() {
+  if (!lastBuilt) {
+    setStatus('Preparing the clean file…', true);
+    try { lastBuilt = await buildExport(); }
+    catch { setStatus('Could not build the clean file.', false); return; }
+    const result = lastBuilt.isPdf ? await verifyCleanPdf(lastBuilt.blob) : await verifyClean(lastBuilt.blob);
+    renderVerify(result);
+  }
+  await triggerDownload(lastBuilt.filename, lastBuilt.blob);
+}
+
+btnDownload.addEventListener('click', () => { void doDownload(); });
+
+// ── Manual redaction: draw / delete boxes the detectors missed ────────────────
+
+const mainContainer = document.getElementById('mainContainer') as HTMLDivElement;
+const overlayWrap   = document.getElementById('overlayWrap')   as HTMLDivElement;
+const btnDraw       = document.getElementById('btnDraw')       as HTMLButtonElement;
+
+function refreshOverlay() {
+  renderOverlay(currentDetections, deleteDetection);
+}
+
+function deleteDetection(index: number) {
+  currentDetections.splice(index, 1);
+  refreshOverlay();
+  updateCountBadge('countFaces',  countType('face'));
+  updateCountBadge('countEmails', countType('email'));
+  updateCountBadge('countPhones', countType('phone'));
+  updateCountBadge('countCards',  countType('card'));
+  updateCountBadge('countNames',  countType('name'));
+}
+
+let drawMode = false;
+let draft: HTMLDivElement | null = null;
+let startX = 0, startY = 0;
+
+btnDraw.addEventListener('click', () => {
+  drawMode = !drawMode;
+  btnDraw.setAttribute('aria-pressed', String(drawMode));
+  btnDraw.classList.toggle('active', drawMode);
+  overlayWrap.classList.toggle('drawing', drawMode);
+});
+
+function localPoint(e: PointerEvent): { x: number; y: number } {
+  const rect = overlayWrap.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(rect.width,  e.clientX - rect.left)),
+    y: Math.max(0, Math.min(rect.height, e.clientY - rect.top)),
+  };
+}
+
+mainContainer.addEventListener('pointerdown', (e) => {
+  if (!drawMode || !currentCanvas) return;
+  const p = localPoint(e);
+  startX = p.x; startY = p.y;
+  draft = document.createElement('div');
+  draft.className = 'detection-box draft';
+  draft.style.left = `${startX}px`;
+  draft.style.top = `${startY}px`;
+  overlayWrap.appendChild(draft);
+});
+
+window.addEventListener('pointermove', (e) => {
+  if (!draft) return;
+  const p = localPoint(e);
+  draft.style.left   = `${Math.min(startX, p.x)}px`;
+  draft.style.top    = `${Math.min(startY, p.y)}px`;
+  draft.style.width  = `${Math.abs(p.x - startX)}px`;
+  draft.style.height = `${Math.abs(p.y - startY)}px`;
+});
+
+window.addEventListener('pointerup', (e) => {
+  if (!draft || !currentCanvas) { draft?.remove(); draft = null; return; }
+  const p = localPoint(e);
+  const dx = Math.min(startX, p.x), dy = Math.min(startY, p.y);
+  const dw = Math.abs(p.x - startX), dh = Math.abs(p.y - startY);
+  draft.remove();
+  draft = null;
+  if (dw < 6 || dh < 6) return; // ignore stray clicks
+
+  // Convert display pixels → canvas pixels.
+  const sx = currentCanvas.width  / overlayWrap.clientWidth;
+  const sy = currentCanvas.height / overlayWrap.clientHeight;
+  currentDetections.push({
+    type: 'manual',
+    label: 'MANUAL',
+    bbox: { x: dx * sx, y: dy * sy, width: dw * sx, height: dh * sy },
+  });
+  refreshOverlay();
+});
 
 const batchBackdrop = document.getElementById('batchBackdrop') as HTMLDivElement;
 document.getElementById('btnBatchRedact')!.addEventListener('click', () => {
@@ -299,7 +411,7 @@ function showBatchModal(results: ScanResult[]) {
     ? `Found ${totalVisible} visible item${totalVisible !== 1 ? 's' : ''} across ${results.length} files. Review below, then redact all at once.`
     : `No visible faces or text found in ${results.length} files.${totalMeta > 0 ? ` Hidden metadata will be stripped.` : ''}`;
 
-  fileList.innerHTML = '';
+  while (fileList.firstChild) fileList.removeChild(fileList.firstChild);
   for (const r of results) {
     const row = document.createElement('div');
     row.className = 'batch-file-row';
@@ -412,7 +524,7 @@ const CAT_LABEL: Record<Finding['category'], string> = {
 };
 
 function renderForensics(report: ForensicReport) {
-  forensicsList.innerHTML = '';
+  while (forensicsList.firstChild) forensicsList.removeChild(forensicsList.firstChild);
   forensicsVerify.hidden = true;
 
   const high = report.findings.filter((f) => f.severity === 'high').length;
@@ -433,15 +545,31 @@ function renderForensics(report: ForensicReport) {
     for (const f of report.findings) {
       const li = document.createElement('li');
       li.className = `finding ${f.severity}`;
-      li.innerHTML = `
-        <span class="finding-dot"></span>
-        <div class="finding-body">
-          <div><span class="finding-label"></span><span class="finding-cat"></span></div>
-          <div class="finding-detail"></div>
-        </div>`;
-      (li.querySelector('.finding-label') as HTMLElement).textContent = f.label;
-      (li.querySelector('.finding-cat') as HTMLElement).textContent = CAT_LABEL[f.category];
-      (li.querySelector('.finding-detail') as HTMLElement).textContent = f.risk;
+
+      const dot = document.createElement('span');
+      dot.className = 'finding-dot';
+
+      const body = document.createElement('div');
+      body.className = 'finding-body';
+
+      const head = document.createElement('div');
+      const label = document.createElement('span');
+      label.className = 'finding-label';
+      label.textContent = f.label;
+      const cat = document.createElement('span');
+      cat.className = 'finding-cat';
+      cat.textContent = CAT_LABEL[f.category];
+      head.appendChild(label);
+      head.appendChild(cat);
+
+      const detail = document.createElement('div');
+      detail.className = 'finding-detail';
+      detail.textContent = f.risk;
+
+      body.appendChild(head);
+      body.appendChild(detail);
+      li.appendChild(dot);
+      li.appendChild(body);
       forensicsList.appendChild(li);
     }
   }
@@ -459,7 +587,6 @@ document.addEventListener('file:raw', (e: Event) => {
   forensicsPanel.hidden = true;
   updateCountBadge('countMetadata', 0);
   metaItemsFound = 0;
-  lastVerifiedClean = false;
 
   // Skip heavy UI + forensics in redact phase — detections are already stored
   if (getBatchPhase() === 'redact') {
@@ -493,19 +620,27 @@ document.addEventListener('file:failed', (e: Event) => {
   finishScan();
 });
 
+function renderVerify(result: VerifyResult) {
+  forensicsVerify.hidden = false;
+  if (result.clean) {
+    forensicsVerify.className = 'forensics-verify ok';
+    forensicsVerify.textContent = '✓ Verified clean — the exported file has no metadata, scripts, embedded files, or appended data';
+  } else {
+    forensicsVerify.className = 'forensics-verify warn';
+    const bits: string[] = [];
+    if (result.residualFields > 0) bits.push(`${result.residualFields} metadata field(s)`);
+    if (result.threats.length > 0) bits.push(`${result.threats.length} active-content token(s)`);
+    if (result.trailingBytes > 0) bits.push(`${result.trailingBytes} trailing byte(s)`);
+    forensicsVerify.textContent = `⚠ ${bits.join(', ') || 'residual data'} remain in the exported file`;
+  }
+}
+
+// Batch path verifies here (single-file path verifies inline in the redact handler).
 document.addEventListener('export:done', async (e: Event) => {
-  const { blob } = (e as CustomEvent<{ blob: Blob }>).detail;
+  const { blob, isPdf } = (e as CustomEvent<{ blob: Blob; isPdf?: boolean }>).detail;
   try {
-    const result = await verifyClean(blob);
-    lastVerifiedClean = result.clean;
-    forensicsVerify.hidden = false;
-    if (result.clean) {
-      forensicsVerify.className = 'forensics-verify ok';
-      forensicsVerify.textContent = '✓ Verified clean — exported file has no metadata, thumbnail, or appended data';
-    } else {
-      forensicsVerify.className = 'forensics-verify warn';
-      forensicsVerify.textContent = `⚠ ${result.residualFields} metadata field(s), ${result.trailingBytes} trailing byte(s) remain`;
-    }
+    const result = isPdf ? await verifyCleanPdf(blob) : await verifyClean(blob);
+    renderVerify(result);
   } catch (err) {
     console.error('Verification failed:', err);
   }

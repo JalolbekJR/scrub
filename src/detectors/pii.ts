@@ -18,9 +18,9 @@ function getWorker(): Worker {
   return worker;
 }
 
-const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
-const PHONE_RE = /(\+?[\d\s\-()\\.]{7,15}\d)/g;
-const CARD_RE  = /\b(?:\d[ \-]?){13,16}\b/g;
+const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+const PHONE_RE = /(\+?[\d\s()\\.-]{7,15}\d)/g;
+const CARD_RE  = /\b(?:\d[ -]?){13,16}\b/g;
 
 // Common name prefixes to help identify names
 const NAME_PREFIX_RE = /\b(Mr|Mrs|Ms|Dr|Prof|Sir|Lady|Lord)\.?\s+[A-Z][a-z]+/g;

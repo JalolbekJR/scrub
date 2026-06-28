@@ -179,6 +179,10 @@
             <h2 class="controls-title">Detect &amp; Redact</h2>
             <p class="controls-result" id="controlsResult" aria-live="polite" hidden></p>
             <p class="controls-hint">Untick anything you want to keep. Selected items are <strong>pixelated into the image</strong> — never just covered over.</p>
+            <div class="manual-tools">
+              <button type="button" class="btn-draw" id="btnDraw" aria-pressed="false">✏ Draw redaction box</button>
+              <span class="manual-hint">Cover anything the scan missed. Click ✕ on a box to remove it.</span>
+            </div>
             <div class="checkbox-group" role="group" aria-label="Detection categories">
               <label class="check-item" id="itemFaces">
                 <input type="checkbox" id="chkFaces" checked />
