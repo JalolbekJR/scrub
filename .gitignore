@@ -13,6 +13,9 @@ dist-ssr
 *.local
 package-lock.json
 .claude/
+test-results/
+playwright-report/
+.auth/
 
 # Local test files (your private photos/PDFs) — never committed or deployed
 public/test/
