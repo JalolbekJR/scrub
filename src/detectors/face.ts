@@ -91,7 +91,11 @@ export async function detectFaces(imageData: ImageData): Promise<BoundingBox[]> 
   try {
     if (!ready) ready = init();
     const r = await ready;
-    if (!r) { telFaceBackend.textContent = 'error'; telFaceMs.textContent = '—'; return []; }
+    if (!r) {
+      telFaceBackend.textContent = 'error';
+      telFaceMs.textContent = '—';
+      throw new Error('Face model unavailable');
+    }
 
     const canvas = document.createElement('canvas');
     canvas.width = imageData.width;
@@ -121,10 +125,10 @@ export async function detectFaces(imageData: ImageData): Promise<BoundingBox[]> 
     telFaceBackend.textContent = r.backend;
     telFaceMs.textContent = `${Math.round(performance.now() - t0)}ms`;
     return faces;
-  } catch {
-    console.error('Face detection failed');
+  } catch (err) {
+    console.error('Face detection failed:', err);
     telFaceBackend.textContent = 'error';
     telFaceMs.textContent = '—';
-    return [];
+    throw err;
   }
 }

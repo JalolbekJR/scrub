@@ -47,8 +47,11 @@ npm run dev
 Open `http://localhost:5173`.
 
 ```bash
-npm run build    # production build → ./dist
-npm run lint     # type check
+npm run typecheck   # TypeScript type checking (tsc --noEmit)
+npm run lint        # ESLint
+npm test            # unit tests (Vitest)
+npm run e2e         # browser end-to-end tests (Playwright)
+npm run build       # production build → ./dist
 ```
 
 ---

@@ -216,6 +216,62 @@
   border-top-color: transparent;
 }
 
+/* ── PDF export progress + cancel ─────────────────────────────────────────── */
+.export-progress {
+  margin-top: 10px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+}
+
+.export-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.btn-cancel-export {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
+}
+
+.btn-cancel-export:hover {
+  border-color: #d23b3b;
+  color: #d23b3b;
+  background: rgba(210, 59, 59, 0.06);
+}
+
+.export-progress-track {
+  width: 100%;
+  height: 8px;
+  background: var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.export-progress-bar {
+  height: 100%;
+  width: 0;
+  background: var(--primary);
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
@@ -229,6 +285,18 @@
   justify-content: center;
   font-size: var(--fs-sm);
   color: var(--text-muted);
+}
+
+.pdf-warning {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: #8A6D00;
+  background: rgba(224, 168, 0, 0.08);
+  border: 1px solid #E0A800;
+  border-radius: 8px;
+  text-align: center;
 }
 
 .pdf-nav button {
@@ -906,6 +974,7 @@ canvas {
 }
 
 .controls-result.scanning { color: var(--text-muted); font-weight: 500; }
+.controls-result.warn { border-color: #E0A800; background: rgba(224, 168, 0, 0.08); color: #8A6D00; }
 .controls-result .ok { color: var(--primary); }
 
 .controls-hint {

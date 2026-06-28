@@ -6,7 +6,7 @@ function pdfBlob(body: string): Blob {
   return new Blob([new TextEncoder().encode(text)], { type: 'application/pdf' });
 }
 
-describe('verifyCleanPdf — real structural PDF verification', () => {
+describe('verifyCleanPdf — token-level verification of the generated PDF', () => {
   it('passes a minimal PDF with no scripts or metadata', async () => {
     const r = await verifyCleanPdf(pdfBlob('1 0 obj<</Type/Catalog>>endobj'));
     expect(r.clean).toBe(true);

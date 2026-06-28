@@ -6,16 +6,26 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # Actions pinned to a full commit SHA for supply-chain safety; Dependabot
+      # keeps the SHA + the version comment up to date.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
-      - run: npm install
+      # Pin npm to the major that generated package-lock.json so `npm ci` reads
+      # the lockfile's cross-platform optional deps identically to local dev.
+      - run: npm install -g npm@11
+      - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - run: npx playwright install --with-deps
+      - run: npm run e2e
