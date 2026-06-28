@@ -18,7 +18,7 @@ async function getOcrWorker() {
   if (!ocrWorker) {
     ocrWorker = await createWorker('eng', 1, {
       workerPath: new URL('tesseract.js/dist/worker.min.js', import.meta.url).href,
-      langPath: 'https://tessdata.projectnaptha.com/4.0.0',
+      langPath: '/vendor/tessdata',
       corePath: new URL('tesseract.js-core/tesseract-core-simd.wasm.js', import.meta.url).href,
       logger: (m: { status?: string; progress?: number }) => {
         self.postMessage({ type: 'progress', status: m.status, progress: m.progress });

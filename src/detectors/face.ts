@@ -7,8 +7,10 @@ import type { BoundingBox } from '../types';
 const telFaceBackend = document.getElementById('telFaceBackend') as HTMLSpanElement;
 const telFaceMs = document.getElementById('telFaceMs') as HTMLSpanElement;
 
-const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm';
-const MODEL_PATH = 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite';
+// Self-hosted: the WASM fileset and the .tflite model live in public/vendor and
+// are served from our own origin. Nothing is fetched from a third-party CDN.
+const WASM_BASE = '/vendor/mediapipe/wasm';
+const MODEL_PATH = '/vendor/mediapipe/blaze_face_short_range.tflite';
 
 type Vision = Awaited<ReturnType<typeof import('@mediapipe/tasks-vision')['FilesetResolver']['forVisionTasks']>>;
 type Detector = Awaited<ReturnType<typeof import('@mediapipe/tasks-vision')['FaceDetector']['createFromOptions']>>;

@@ -6,14 +6,9 @@ Scrub is a privacy tool. This document describes the threat model and the protec
 
 **No file data leaves your device.** There is no server, no upload, no analytics, and no account. Every operation — face detection, OCR, metadata parsing, redaction, export — runs locally in your browser.
 
-The app does make a small number of outbound requests for **its own assets**, never for your files:
+**All runtime assets are self-hosted.** The MediaPipe face model + WASM, the Tesseract OCR core, the English language data, and the web fonts are served from the app's own origin (`/vendor/...` and the bundled assets) — there are no third-party CDN requests. `connect-src` is locked to `'self'`.
 
-- the MediaPipe face model + WASM (jsDelivr / Google Storage),
-- the Tesseract OCR core and English language data (jsDelivr / Project Naptha),
-- web fonts (Google Fonts),
-- an optional read of the public GitHub star count (GitHub API).
-
-None of these carry any byte of your file. They are listed honestly because a privacy tool should not claim "zero network activity" while loading remote runtime assets. A future hardening step is to self-host all of them and tighten `connect-src` to `'self'` — see *Known limitations* below.
+The **only** optional outbound request is a read of the public GitHub star count (`api.github.com`) for the support dialog. It carries no file data and the app works fully without it.
 
 ---
 
@@ -48,7 +43,7 @@ The pipeline is **generate → verify → present result → download**. The exp
 
 ### Data leakage
 
-- **Content-Security-Policy** (`public/_headers`) restricts scripts and network connections to a small set of known origins (`cdn.jsdelivr.net`, `storage.googleapis.com`, `tessdata.projectnaptha.com`, `fonts.gstatic.com`, `api.github.com`). `object-src 'none'`, `base-uri 'self'`, `form-action 'none'`. This sharply limits where anything could go, but it is **not** an absolute guarantee: those origins are allow-listed because the app loads runtime assets from them, so a compromise of one of those dependencies would still have a permitted network destination. Self-hosting every asset and reducing `connect-src` to `'self'` is the planned hardening step.
+- **Content-Security-Policy** (`public/_headers`) is locked down: `default-src 'self'`, `object-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'`, `form-action 'none'`. Scripts, styles, fonts, workers, and images load only from `'self'` (plus `blob:`/`data:` for in-memory canvas work and `'wasm-unsafe-eval'` for the on-device ML). `connect-src` is `'self'` plus a single optional endpoint, `api.github.com`, used only for the public star count. There is no third-party script or asset origin in the policy.
 - **The scanner is value-blind by design.** `inspectFile()` in `src/forensics.ts` collapses every metadata value to a boolean immediately on read and returns only a category label plus a fixed risk description. The actual values (GPS coordinates, device serials, author names, comment text) are never assigned to a returned field, rendered, written to storage, placed on a global, or logged. Changing this behavior requires rewriting the parser — it is not a hidden mode.
 - **Error handlers log generic strings only.** No file content, filenames, or metadata values appear in console output.
 - **Additional headers:** `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Permissions-Policy` disabling camera/microphone/geolocation, HSTS.
@@ -77,7 +72,6 @@ Honesty matters more than marketing for a privacy tool. Current limits:
 - **Detectors are not perfect.** No face detector or OCR engine has perfect recall. Always review the boxes, and use **Draw redaction box** to cover anything the scan missed. This is why manual redaction exists.
 - **OCR is English-only.** Text detection uses the English Tesseract model. Text in other scripts (Cyrillic, Arabic, CJK, …) is not reliably read and may not be flagged — redact it manually.
 - **Name detection is narrow.** Automatic name detection currently matches titled names (e.g. *Mr Smith*, *Dr Brown*). Plain full names like *John Smith* are not detected automatically — use manual redaction.
-- **Remote runtime assets.** As noted above, models, WASM, OCR data, and fonts are loaded from public CDNs today. They never receive your files, but self-hosting is the planned hardening step.
 - **Not an antivirus / not steganography-proof** — see below.
 
 ---

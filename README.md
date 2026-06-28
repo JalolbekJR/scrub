@@ -27,7 +27,9 @@ No detector is perfect, so you can **draw your own redaction boxes** over anythi
 
 Before the download is offered, the exported file is **verified**: images are re-parsed for residual metadata and trailing bytes; PDFs are scanned for scripts, embedded files, leftover document metadata, and appended data. The "verified clean" badge reflects that real check.
 
-> **Status: beta.** It does what it says and verifies its own output, but treat it as a strong privacy aid, not a certified sanitizer. See [SECURITY.md](./SECURITY.md) for the threat model and honest limitations (English-only OCR, remote model/OCR/font assets, detector recall).
+All ML models, OCR data, and fonts are **self-hosted** — there are no third-party CDN requests, and the Content-Security-Policy locks `connect-src` to your own origin (the only optional external call is the public GitHub star count).
+
+> **Status: beta.** It does what it says and verifies its own output, but treat it as a strong privacy aid, not a certified sanitizer. See [SECURITY.md](./SECURITY.md) for the threat model and honest limitations (English-only OCR, detector recall).
 
 ---
 
