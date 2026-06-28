@@ -11,6 +11,9 @@ node_modules
 dist
 dist-ssr
 *.local
+# Not committed: Cloudflare auto-builds from GitHub with `npm install`. A committed
+# npm-11 lockfile breaks that build (Cloudflare's npm 10 errors with EBADPLATFORM).
+package-lock.json
 .claude/
 test-results/
 playwright-report/

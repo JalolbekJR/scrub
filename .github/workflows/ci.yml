@@ -19,10 +19,9 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
-      # Pin npm to the major that generated package-lock.json so `npm ci` reads
-      # the lockfile's cross-platform optional deps identically to local dev.
-      - run: npm install -g npm@11
-      - run: npm ci
+      # No committed lockfile (see .gitignore) so Cloudflare's GitHub build stays
+      # green; install matches that environment.
+      - run: npm install
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
