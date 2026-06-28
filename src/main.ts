@@ -10,7 +10,8 @@ import { inspectFile, verifyClean, type ForensicReport, type Finding } from './f
 import { startScan, setPhase, phaseLog, updateOcrProgress, finishScan } from './scanner';
 import { celebrate } from './celebrate';
 import { initTicker } from './ticker';
-import { enqueue, initQueue, isBatchActive, fileFinished } from './queue';
+import { enqueue, initQueue, getBatchPhase, fileScanned, fileFinished, startRedactPhase, getCurrentScanResult } from './queue';
+import type { ScanResult } from './types';
 import { handleFile } from './upload';
 import type { Detection, FileLoadedDetail } from './types';
 
@@ -26,11 +27,19 @@ initQueue(
   (done, total) => {
     if (total <= 1) { queueBar.hidden = true; return; }
     queueBar.hidden = false;
-    queueLabel.textContent = total === done
-      ? `Batch complete — ${done} file${done !== 1 ? 's' : ''} scrubbed`
-      : `Processing ${done + 1} of ${total}…`;
+    const phase = getBatchPhase();
+    if (phase === 'scan') {
+      queueLabel.textContent = `Scanning ${done + 1} of ${total}…`;
+    } else if (phase === 'redact') {
+      queueLabel.textContent = done >= total
+        ? `Done — ${total} file${total !== 1 ? 's' : ''} scrubbed`
+        : `Redacting ${done + 1} of ${total}…`;
+    } else if (done >= total) {
+      queueLabel.textContent = `Done — ${total} file${total !== 1 ? 's' : ''} scrubbed`;
+    }
     queueFill.style.width = `${Math.round((done / total) * 100)}%`;
-  }
+  },
+  (results) => showBatchModal(results),
 );
 
 initUpload((files) => enqueue(files));
@@ -49,13 +58,14 @@ const statusRing = document.getElementById('statusRing') as HTMLDivElement;
 
 let currentDetections: Detection[] = [];
 let currentCanvas: HTMLCanvasElement | null = null;
-let originalImageData: ImageData | null = null; // pristine copy — never mutated
+let originalImageData: ImageData | null = null;
 let currentPageNum = 1;
 let currentIsPdf = false;
-let metaItemsFound = 0;          // count only — never the values
+let metaItemsFound = 0;
 let lastVerifiedClean = false;
 let forensicsGate: Promise<void> = Promise.resolve();
-let activeGen = 0;               // newest upload wins; stale async results are dropped
+let activeGen = 0;
+let currentFile: File | null = null;
 
 const dropZone = document.getElementById('dropZone') as HTMLDivElement;
 const controlsResult = document.getElementById('controlsResult') as HTMLParagraphElement;
@@ -189,15 +199,43 @@ document.addEventListener('file:loaded', async (e: Event) => {
     true
   );
 
-  if (isBatchActive() && currentCanvas && originalImageData) {
+  const phase = getBatchPhase();
+
+  if (phase === 'scan') {
+    fileScanned({
+      file: currentFile ?? new File([], ''),
+      faces:  countType('face'),
+      emails: countType('email'),
+      phones: countType('phone'),
+      cards:  countType('card'),
+      names:  countType('name'),
+      meta:   metaItemsFound,
+      detections: [...currentDetections],
+    });
+    return;
+  }
+
+  if (phase === 'redact') {
+    // Use stored detections from scan phase — no re-detection
+    const stored = getCurrentScanResult();
+    if (!stored || !currentCanvas || !originalImageData) { fileFinished(); return; }
     const ctx = currentCanvas.getContext('2d')!;
     ctx.putImageData(originalImageData, 0, 0);
-    redactAll(currentCanvas, currentDetections.map((d) => d.bbox));
+    const toRedact = stored.detections.filter((d) => {
+      if (d.type === 'face'  && !chkFaces.checked)  return false;
+      if (d.type === 'email' && !chkEmails.checked) return false;
+      if (d.type === 'phone' && !chkPhones.checked) return false;
+      if (d.type === 'card'  && !chkCards.checked)  return false;
+      if (d.type === 'name'  && !chkNames.checked)  return false;
+      return true;
+    });
+    redactAll(currentCanvas, toRedact.map((d) => d.bbox));
     clearOverlay();
-    const safeName = `scrubbed-${Date.now()}.jpg`;
-    exportBatch(safeName);
+    const baseName = stored.file.name.replace(/\.[^.]+$/, '');
+    exportBatch(`scrubbed-${baseName}.jpg`);
     document.addEventListener('export:done', () => fileFinished(), { once: true });
-    setStatus(`Auto-redacted — downloading ${safeName}`, false, true);
+    setStatus(`Redacting ${stored.file.name}…`, true);
+    return;
   }
 });
 
@@ -240,6 +278,58 @@ btnRedact.addEventListener('click', () => {
 });
 
 const btnDownload = document.getElementById('btnDownload') as HTMLButtonElement;
+
+const batchBackdrop = document.getElementById('batchBackdrop') as HTMLDivElement;
+document.getElementById('btnBatchRedact')!.addEventListener('click', () => {
+  batchBackdrop.hidden = true;
+  startRedactPhase();
+});
+document.getElementById('btnBatchCancel')!.addEventListener('click', () => {
+  batchBackdrop.hidden = true;
+});
+
+function showBatchModal(results: ScanResult[]) {
+  const summary = document.getElementById('batchModalSummary') as HTMLParagraphElement;
+  const fileList = document.getElementById('batchFileList') as HTMLDivElement;
+
+  const totalVisible = results.reduce((s, r) => s + r.faces + r.emails + r.phones + r.cards + r.names, 0);
+  const totalMeta    = results.reduce((s, r) => s + r.meta, 0);
+
+  summary.textContent = totalVisible > 0
+    ? `Found ${totalVisible} visible item${totalVisible !== 1 ? 's' : ''} across ${results.length} files. Review below, then redact all at once.`
+    : `No visible faces or text found in ${results.length} files.${totalMeta > 0 ? ` Hidden metadata will be stripped.` : ''}`;
+
+  fileList.innerHTML = '';
+  for (const r of results) {
+    const row = document.createElement('div');
+    row.className = 'batch-file-row';
+
+    const parts: string[] = [];
+    if (r.faces)  parts.push(`${r.faces} face${r.faces  !== 1 ? 's' : ''}`);
+    if (r.emails) parts.push(`${r.emails} email${r.emails !== 1 ? 's' : ''}`);
+    if (r.phones) parts.push(`${r.phones} phone${r.phones !== 1 ? 's' : ''}`);
+    if (r.cards)  parts.push(`${r.cards} card${r.cards  !== 1 ? 's' : ''}`);
+    if (r.names)  parts.push(`${r.names} name${r.names  !== 1 ? 's' : ''}`);
+
+    const visibleStr = parts.length > 0 ? parts.join(', ') : 'nothing visible';
+    const metaStr    = r.meta > 0 ? ` · ${r.meta} hidden` : '';
+
+    const name = document.createElement('span');
+    name.className = 'batch-filename';
+    name.textContent = r.file.name;
+    name.title = r.file.name;
+
+    const found = document.createElement('span');
+    found.className = `batch-found${parts.length > 0 ? ' has-items' : ' clean'}`;
+    found.textContent = visibleStr + metaStr;
+
+    row.appendChild(name);
+    row.appendChild(found);
+    fileList.appendChild(row);
+  }
+
+  batchBackdrop.hidden = false;
+}
 
 // Reset the preview to the single live canvas (used when a new file loads).
 function resetView() {
@@ -364,30 +454,33 @@ const onboarding = document.getElementById('onboarding') as HTMLElement;
 document.addEventListener('file:raw', (e: Event) => {
   const { file, gen } = (e as CustomEvent<{ file: File; gen: number }>).detail;
   activeGen = gen;
-  // First file loaded — retire the onboarding guide.
+  currentFile = file;
   onboarding.hidden = true;
-  // Reset panel for the new file
   forensicsPanel.hidden = true;
   updateCountBadge('countMetadata', 0);
   metaItemsFound = 0;
   lastVerifiedClean = false;
 
-  // Kick off the animated scanner: read → scan phases happen here.
+  // Skip heavy UI + forensics in redact phase — detections are already stored
+  if (getBatchPhase() === 'redact') {
+    forensicsGate = Promise.resolve();
+    return;
+  }
+
   startScan();
   phaseLog('read');
   setPhase('scan');
   phaseLog('scan');
 
-  // Expose the forensics work as a gate the detection pipeline awaits.
   forensicsGate = (async () => {
     try {
       const report = await inspectFile(file);
       if (gen !== activeGen) return;
-      renderForensics(report);
+      if (getBatchPhase() !== 'scan') renderForensics(report);
       metaItemsFound = report.findings.length;
       updateCountBadge('countMetadata', metaItemsFound);
     } catch {
-      console.error('Forensic scan failed'); // never log file contents
+      console.error('Forensic scan failed');
     }
   })();
 });

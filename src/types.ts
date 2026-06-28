@@ -13,6 +13,17 @@ export interface Detection {
   label?: string;
 }
 
+export interface ScanResult {
+  file: File;
+  faces: number;
+  emails: number;
+  phones: number;
+  cards: number;
+  names: number;
+  meta: number;
+  detections: Detection[];
+}
+
 export interface FileLoadedDetail {
   canvas: HTMLCanvasElement;
   cleanImageData: ImageData;

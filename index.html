@@ -274,6 +274,20 @@
       </div>
     </footer>
 
+    <!-- Batch scan review modal -->
+    <div class="batch-backdrop" id="batchBackdrop" hidden role="dialog" aria-modal="true" aria-labelledby="batchModalTitle">
+      <div class="batch-modal">
+        <h2 class="batch-modal-title" id="batchModalTitle">Scan complete</h2>
+        <p class="batch-modal-summary" id="batchModalSummary"></p>
+        <div class="batch-file-list" id="batchFileList"></div>
+        <p class="batch-modal-note">Your checkboxes above apply — untick anything you want to keep before redacting.</p>
+        <div class="batch-modal-actions">
+          <button class="btn btn-primary" id="btnBatchRedact">Redact all &amp; download</button>
+          <button class="btn btn-secondary" id="btnBatchCancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Success / support modal -->
     <div class="modal-backdrop" id="celebrateBackdrop" hidden>
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="celebTitle" id="celebrateModal">

@@ -1,9 +1,10 @@
 import type { BoundingBox } from './types';
 
-// Pad boxes outward — detection boxes hug content tightly and edge pixels leak.
+// Pad boxes outward a little so edge pixels don't leak, but stay tight to the
+// detected region — a face box should cover the face, not the area around it.
 function padBox(box: BoundingBox, canvasW: number, canvasH: number): BoundingBox {
-  const padX = Math.max(14, Math.round(box.height * 0.4));
-  const padY = Math.max(10, Math.round(box.height * 0.32));
+  const padX = Math.max(8, Math.round(box.width * 0.12));
+  const padY = Math.max(8, Math.round(box.height * 0.12));
   const x = Math.max(0, Math.floor(box.x - padX));
   const y = Math.max(0, Math.floor(box.y - padY));
   const right = Math.min(canvasW, Math.ceil(box.x + box.width + padX));
