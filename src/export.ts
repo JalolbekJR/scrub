@@ -146,14 +146,9 @@ export async function triggerDownload(filename: string, blob: Blob) {
   }
 }
 
-// Batch mode: build, verify (via export:done listener) and auto-save silently.
-export function exportBatch(filename: string) {
-  buildImageBlob().then((blob) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
-    document.dispatchEvent(new CustomEvent('export:done', { detail: { blob, isPdf: false } }));
-  });
+// Batch mode: build one file's sanitised blob WITHOUT downloading. The bundle
+// flow collects every file's blob and offers a single download from the finished
+// dialog (same as single-file) — so it never silently saves behind the user's back.
+export async function buildBatchBlob(): Promise<Blob> {
+  return buildImageBlob();
 }
