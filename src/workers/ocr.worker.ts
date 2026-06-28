@@ -16,9 +16,12 @@ let ocrWorker: Awaited<ReturnType<typeof createWorker>> | null = null;
 
 async function getOcrWorker() {
   if (!ocrWorker) {
+    // Absolute URL — Tesseract's internal worker can't resolve a root-relative
+    // path against its own (blob) base, so build the full origin-qualified URL.
+    const langPath = new URL('/vendor/tessdata', self.location.origin).href;
     ocrWorker = await createWorker('eng', 1, {
       workerPath: new URL('tesseract.js/dist/worker.min.js', import.meta.url).href,
-      langPath: '/vendor/tessdata',
+      langPath,
       corePath: new URL('tesseract.js-core/tesseract-core-simd.wasm.js', import.meta.url).href,
       logger: (m: { status?: string; progress?: number }) => {
         self.postMessage({ type: 'progress', status: m.status, progress: m.progress });
