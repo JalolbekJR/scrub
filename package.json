@@ -4,7 +4,7 @@
   "description": "Remove faces, private text, and hidden metadata from images and PDFs — entirely in your browser.",
   "author": "Jalolbek JR <learner0422@gmail.com> (https://github.com/JalolbekJR)",
   "license": "MIT",
-  "homepage": "https://github.com/JalolbekJR/scrub",
+  "homepage": "https://scrub.learner0422.workers.dev",
   "repository": {
     "type": "git",
     "url": "https://github.com/JalolbekJR/scrub.git"

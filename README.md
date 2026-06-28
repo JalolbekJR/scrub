@@ -4,7 +4,7 @@ Remove faces, private text, and hidden metadata from images and PDFs — in your
 
 [![MIT License](https://img.shields.io/badge/license-MIT-6667AB.svg)](./LICENSE)
 
-**Live version:** _coming soon_
+**Live version:** [scrub.learner0422.workers.dev](https://scrub.learner0422.workers.dev)
 
 > The live version runs the exact same code as this repo, entirely in your browser. Your files are never sent anywhere — not to a server, not to me, not anywhere. You can verify this by running it locally.
 
