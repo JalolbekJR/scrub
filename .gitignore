@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 *.local
+package-lock.json
 
 # Local test files (your private photos/PDFs) — never committed or deployed
 public/test/
