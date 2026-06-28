@@ -7,7 +7,7 @@ import '@fontsource/jetbrains-mono/500.css';
 import './style.css';
 import { initTheme } from './theme';
 import { initUpload } from './upload';
-import { buildExport, triggerDownload, enableDownload, exportBatch, setPdfContext, storeRedactedPage, resetExportContext, type BuiltExport } from './export';
+import { buildExport, triggerDownload, enableDownload, buildBatchBlob, setPdfContext, storeRedactedPage, resetExportContext, type BuiltExport } from './export';
 import { detectFaces } from './detectors/face';
 import { detectPii } from './detectors/pii';
 import { redactAll } from './redactor';
@@ -46,6 +46,7 @@ initQueue(
     queueFill.style.width = `${Math.round((done / total) * 100)}%`;
   },
   (results) => showBatchModal(results),
+  () => showBatchComplete(),
 );
 
 initUpload((files) => enqueue(files));
@@ -265,10 +266,23 @@ document.addEventListener('file:loaded', async (e: Event) => {
     });
     redactAll(currentCanvas, toRedact.map((d) => d.bbox));
     clearOverlay();
-    const baseName = stored.file.name.replace(/\.[^.]+$/, '');
-    exportBatch(`scrubbed-${baseName}.jpg`);
-    document.addEventListener('export:done', () => fileFinished(), { once: true });
     setStatus(`Redacting ${stored.file.name}…`, true);
+
+    // Build & verify the blob, but DON'T download yet — collect it and offer a
+    // single download from the finished popup once the whole bundle is done.
+    const baseName = stored.file.name.replace(/\.[^.]+$/, '');
+    try {
+      const blob = await buildBatchBlob();
+      const result = await verifyClean(blob);
+      if (!result.clean) batchAllClean = false;
+      batchRedactedTotal += toRedact.length;
+      batchMetaTotal += metaItemsFound;
+      batchOutputs.push({ filename: `scrubbed-${baseName}.jpg`, blob });
+    } catch (err) {
+      console.error('Batch file export failed:', err);
+      batchAllClean = false;
+    }
+    fileFinished();
     return;
   }
 });
@@ -491,13 +505,55 @@ window.addEventListener('pointerup', (e) => {
 });
 
 const batchBackdrop = document.getElementById('batchBackdrop') as HTMLDivElement;
+
+// Collected sanitised outputs for the current bundle, plus running totals for
+// the finished popup. Reset each time the user starts a redact pass.
+let batchOutputs: { filename: string; blob: Blob }[] = [];
+let batchAllClean = true;
+let batchRedactedTotal = 0;
+let batchMetaTotal = 0;
+
 document.getElementById('btnBatchRedact')!.addEventListener('click', () => {
   batchBackdrop.hidden = true;
+  batchOutputs = [];
+  batchAllClean = true;
+  batchRedactedTotal = 0;
+  batchMetaTotal = 0;
   startRedactPhase();
 });
 document.getElementById('btnBatchCancel')!.addEventListener('click', () => {
   batchBackdrop.hidden = true;
 });
+
+// Save every collected file at once (direct downloads — no per-file Save dialog).
+function downloadAllBatch() {
+  batchOutputs.forEach(({ filename, blob }, i) => {
+    setTimeout(() => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    }, i * 150); // small stagger so browsers don't drop concurrent downloads
+  });
+}
+
+// All bundle files are redacted & verified — show the SAME finished popup as the
+// single-file flow (what was removed + support/GitHub links), download from there.
+function showBatchComplete() {
+  const n = batchOutputs.length;
+  setStatus(
+    `${n} file${n !== 1 ? 's' : ''} scrubbed${batchAllClean ? ' · verified clean' : ''} — ready to download`,
+    false, true,
+  );
+  celebrate(
+    { redacted: batchRedactedTotal, metaItems: batchMetaTotal, verifiedClean: batchAllClean },
+    () => downloadAllBatch(),
+  );
+}
 
 function showBatchModal(results: ScanResult[]) {
   const summary = document.getElementById('batchModalSummary') as HTMLParagraphElement;
@@ -734,13 +790,3 @@ function renderVerify(result: VerifyResult) {
   }
 }
 
-// Batch path verifies here (single-file path verifies inline in the redact handler).
-document.addEventListener('export:done', async (e: Event) => {
-  const { blob, isPdf } = (e as CustomEvent<{ blob: Blob; isPdf?: boolean }>).detail;
-  try {
-    const result = isPdf ? await verifyCleanPdf(blob) : await verifyClean(blob);
-    renderVerify(result);
-  } catch (err) {
-    console.error('Verification failed:', err);
-  }
-});

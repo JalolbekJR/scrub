@@ -10,9 +10,10 @@ let redactIndex = 0;
 let done = 0;
 let total = 0;
 
-let onNext:         ((file: File) => void) | null = null;
-let onProgress:     ((done: number, total: number) => void) | null = null;
-let onScanComplete: ((results: ScanResult[]) => void) | null = null;
+let onNext:           ((file: File) => void) | null = null;
+let onProgress:       ((done: number, total: number) => void) | null = null;
+let onScanComplete:   ((results: ScanResult[]) => void) | null = null;
+let onRedactComplete: (() => void) | null = null;
 
 export function getBatchPhase(): BatchPhase { return batchPhase; }
 export function isBatchActive(): boolean { return batchPhase !== 'none'; }
@@ -23,10 +24,12 @@ export function initQueue(
   nextFn: (file: File) => void,
   progressFn: (done: number, total: number) => void,
   scanCompleteFn: (results: ScanResult[]) => void,
+  redactCompleteFn: () => void,
 ) {
   onNext = nextFn;
   onProgress = progressFn;
   onScanComplete = scanCompleteFn;
+  onRedactComplete = redactCompleteFn;
 }
 
 export function enqueue(files: File[]) {
@@ -86,6 +89,8 @@ export function fileFinished() {
   if (q.length > 0) {
     setTimeout(processNext, 600);
   } else {
+    const wasRedact = batchPhase === 'redact';
     batchPhase = 'none';
+    if (wasRedact) onRedactComplete?.();
   }
 }
