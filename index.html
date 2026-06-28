@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Scrub — Privacy Redactor</title>
+    <meta name="description" content="Drop a file. Scrub detects faces and private info. Download the clean version. Nothing is uploaded — ever." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+
+    <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark/light mode">🌙</button>
+
+    <div class="app">
+
+      <!-- Hero -->
+      <header class="hero">
+        <div class="hero-badge" aria-label="Privacy guarantee">
+          <span class="badge-dot"></span>
+          Runs entirely in your browser · Zero uploads · Free forever
+        </div>
+        <h1 class="hero-title">Scrub</h1>
+        <p class="hero-subtitle">Drop a photo or PDF. Detect faces &amp; private info. Download the clean version. <strong>Nothing is uploaded — ever.</strong></p>
+        <div class="risk-ticker-wrap" aria-hidden="true">
+          <span class="risk-ticker-icon">⚠</span>
+          <span class="risk-ticker" id="riskTicker"></span>
+          <span class="risk-caret"></span>
+        </div>
+      </header>
+
+      <!-- Drop zone -->
+      <main class="main-content">
+        <div
+          class="drop-zone"
+          id="dropZone"
+          role="button"
+          tabindex="0"
+          aria-label="Drop zone: drag and drop an image or PDF here, or click to select a file"
+        >
+          <div class="drop-zone-inner">
+            <svg class="drop-icon" xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            <p class="drop-label">Drop image or PDF here</p>
+            <p class="drop-sublabel">or click to browse · JPEG, PNG, WEBP, PDF</p>
+          </div>
+          <input
+            type="file"
+            id="fileInput"
+            accept="image/*,application/pdf"
+            multiple
+            class="file-input"
+            aria-label="Select file to redact"
+          />
+        </div>
+
+        <!-- First-time onboarding (empty state) -->
+        <section class="onboarding" id="onboarding" aria-label="How Scrub works">
+          <div class="onboarding-head">
+            <span class="onboarding-kicker">How it works</span>
+            <h2 class="onboarding-title">Three steps. Nothing leaves your device.</h2>
+          </div>
+          <ol class="steps">
+            <li class="step">
+              <span class="step-num">1</span>
+              <div class="step-body">
+                <h3 class="step-title">Drop a file</h3>
+                <p class="step-text">Any image or PDF. It's opened locally in your browser — never uploaded.</p>
+              </div>
+            </li>
+            <li class="step">
+              <span class="step-num">2</span>
+              <div class="step-body">
+                <h3 class="step-title">Review what's found</h3>
+                <p class="step-text">Faces, emails, phones, cards &amp; names are boxed. Hidden metadata, GPS and embedded threats are listed too.</p>
+              </div>
+            </li>
+            <li class="step">
+              <span class="step-num">3</span>
+              <div class="step-body">
+                <h3 class="step-title">Download clean</h3>
+                <p class="step-text">Pixels are destroyed and re-encoded with zero metadata — and Scrub verifies it for you.</p>
+              </div>
+            </li>
+          </ol>
+          <div class="onboarding-tips">
+            <span class="tip"><span class="tip-ico" aria-hidden="true">🔒</span> 100% on-device</span>
+            <span class="tip"><span class="tip-ico" aria-hidden="true">🚫</span> No uploads, no tracking</span>
+            <span class="tip"><span class="tip-ico" aria-hidden="true">🎛️</span> You choose what gets redacted</span>
+          </div>
+        </section>
+
+        <!-- Animated multi-phase scanner -->
+        <div class="scanner" id="scanner" hidden aria-live="polite">
+          <div class="scanner-ring" aria-hidden="true">
+            <svg viewBox="0 0 80 80">
+              <circle class="ring-track" cx="40" cy="40" r="34" />
+              <circle class="ring-fill" id="ringFill" cx="40" cy="40" r="34" transform="rotate(-90 40 40)" />
+            </svg>
+            <span class="ring-pct" id="ringPct">0%</span>
+          </div>
+          <div class="scanner-main">
+            <div class="scanner-phase" id="scannerPhase">Reading file…</div>
+            <div class="scanner-sub" id="scannerSub">Everything runs on your device</div>
+            <ol class="scanner-steps" id="scannerSteps">
+              <li data-phase="read">Read</li>
+              <li data-phase="scan">Hidden data</li>
+              <li data-phase="faces">Faces</li>
+              <li data-phase="ocr">Text</li>
+            </ol>
+            <div class="scanner-eta" id="scannerEta"></div>
+          </div>
+          <pre class="scanner-log" id="scannerLog" aria-hidden="true"></pre>
+        </div>
+
+        <!-- Batch queue progress bar -->
+        <div class="queue-bar" id="queueBar" hidden>
+          <span class="queue-label" id="queueLabel"></span>
+          <div class="queue-track"><div class="queue-fill" id="queueFill"></div></div>
+        </div>
+
+        <!-- Status -->
+        <div class="status-bar" id="statusBar" aria-live="polite" aria-atomic="true" hidden>
+          <div class="status-ring" id="statusRing"></div>
+          <span id="statusText">Ready</span>
+        </div>
+
+        <!-- PDF page nav (hidden until PDF loaded) -->
+        <div class="pdf-nav" id="pdfNav" hidden>
+          <button id="prevPage" aria-label="Previous page">&#8592;</button>
+          <span id="pageInfo">Page 1 of 1</span>
+          <button id="nextPage" aria-label="Next page">&#8594;</button>
+        </div>
+
+        <!-- Canvas area -->
+        <div class="canvas-area" id="canvasArea" hidden>
+          <!-- Before/After scrubber (shown after first redaction) -->
+          <div class="scrubber-wrap" id="scrubberWrap" hidden>
+            <div class="canvas-container" id="scrubberContainer">
+              <canvas id="originalCanvas" aria-label="Original unredacted image"></canvas>
+              <canvas id="redactedCanvas" aria-label="Redacted image"></canvas>
+              <div class="scrubber-divider" id="scrubberDivider" role="slider" aria-label="Before/after comparison slider" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"></div>
+              <span class="scrubber-label scrubber-label-left" aria-hidden="true">ORIGINAL</span>
+              <span class="scrubber-label scrubber-label-right" aria-hidden="true">REDACTED</span>
+            </div>
+          </div>
+
+          <!-- Single canvas (before scrubber is shown) -->
+          <div class="single-canvas-wrap" id="singleCanvasWrap">
+            <div class="canvas-container" id="mainContainer">
+              <canvas id="mainCanvas" aria-label="Image preview"></canvas>
+              <div class="overlay-wrap" id="overlayWrap" aria-hidden="true"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Forensic hidden-data scan -->
+        <div class="forensics-panel" id="forensicsPanel" hidden aria-live="polite">
+          <div class="forensics-head">
+            <h2 class="forensics-title">Hidden data &amp; threat scan</h2>
+            <span class="forensics-summary" id="forensicsSummary"></span>
+          </div>
+          <p class="forensics-privacy" id="forensicsPrivacy">
+            <span aria-hidden="true">🔒</span> Values are never shown, stored, or logged — Scrub reports only <em>what</em> was found, then destroys it. File-system properties (owner, dates) live on your disk, <em>not inside</em> the image, and aren't shared.
+          </p>
+          <ul class="forensics-list" id="forensicsList"></ul>
+          <div class="forensics-verify" id="forensicsVerify" hidden></div>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls-panel" id="controlsPanel" hidden>
+          <div class="controls-section">
+            <h2 class="controls-title">Detect &amp; Redact</h2>
+            <p class="controls-result" id="controlsResult" aria-live="polite" hidden></p>
+            <p class="controls-hint">Untick anything you want to keep. Selected items are <strong>pixelated into the image</strong> — never just covered over.</p>
+            <div class="checkbox-group" role="group" aria-label="Detection categories">
+              <label class="check-item" id="itemFaces">
+                <input type="checkbox" id="chkFaces" checked />
+                <span class="check-label">Faces <span class="count-badge" id="countFaces"></span></span>
+                <button type="button" class="check-info" aria-label="Why faces are risky" tabindex="0">i</button>
+                <span class="check-tip" role="tooltip">A clear face identifies a person — face-search AI can match it to their name and other photos across the internet.</span>
+              </label>
+              <label class="check-item" id="itemEmails">
+                <input type="checkbox" id="chkEmails" checked />
+                <span class="check-label">Emails <span class="count-badge" id="countEmails"></span></span>
+                <button type="button" class="check-info" aria-label="Why emails are risky" tabindex="0">i</button>
+                <span class="check-tip" role="tooltip">An email address invites spam and phishing, and links this image to the person's accounts and identity.</span>
+              </label>
+              <label class="check-item" id="itemPhones">
+                <input type="checkbox" id="chkPhones" checked />
+                <span class="check-label">Phone numbers <span class="count-badge" id="countPhones"></span></span>
+                <button type="button" class="check-info" aria-label="Why phone numbers are risky" tabindex="0">i</button>
+                <span class="check-tip" role="tooltip">A phone number enables spam calls, SIM-swap attacks, and reverse lookups that reveal a real name and address.</span>
+              </label>
+              <label class="check-item" id="itemCards">
+                <input type="checkbox" id="chkCards" checked />
+                <span class="check-label">Card numbers <span class="count-badge" id="countCards"></span></span>
+                <button type="button" class="check-info" aria-label="Why card numbers are risky" tabindex="0">i</button>
+                <span class="check-tip" role="tooltip">A card number can be used for fraud — especially dangerous when a name or expiry date is visible nearby.</span>
+              </label>
+              <label class="check-item" id="itemNames">
+                <input type="checkbox" id="chkNames" checked />
+                <span class="check-label">Names <span class="count-badge" id="countNames"></span></span>
+                <button type="button" class="check-info" aria-label="Why names are risky" tabindex="0">i</button>
+                <span class="check-tip" role="tooltip">A full name ties the image to a real person and can be combined with other leaks to de-anonymise them.</span>
+              </label>
+              <label class="check-item check-item-meta" id="itemMeta">
+                <input type="checkbox" id="chkMetadata" checked />
+                <span class="check-label">Metadata &amp; hidden data <span class="count-badge" id="countMetadata"></span></span>
+                <button type="button" class="check-info" aria-label="Why hidden data is risky" tabindex="0">i</button>
+                <span class="check-tip">Hidden EXIF/GPS, device serials, timestamps, embedded thumbnails and appended files — invisible to you, but they travel with the image and can pinpoint where and when it was taken.</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="controls-actions">
+            <button class="btn btn-primary" id="btnRedact" aria-label="Redact selected items">
+              <span class="btn-text">Redact selected</span>
+              <span class="btn-check" aria-hidden="true">&#10003;</span>
+            </button>
+            <button class="btn btn-secondary" id="btnDownload" aria-label="Download clean copy" disabled>
+              Download clean copy
+            </button>
+          </div>
+        </div>
+
+      </main>
+
+      <!-- Telemetry panel -->
+      <div class="telemetry" id="telemetry" aria-label="Processing telemetry" hidden>
+        <div class="telemetry-row telemetry-header">SCRUB · on-device</div>
+        <div class="telemetry-row">
+          <span class="tel-label">Face</span>
+          <span class="tel-model">MediaPipe</span>
+          <span class="tel-backend" id="telFaceBackend">—</span>
+          <span class="tel-ms" id="telFaceMs">—</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="tel-label">OCR</span>
+          <span class="tel-model">Tesseract</span>
+          <span class="tel-backend">WASM</span>
+          <span class="tel-ms" id="telOcrMs">—</span>
+        </div>
+        <div class="telemetry-row telemetry-footer">Nothing left your device</div>
+      </div>
+
+    </div>
+
+    <!-- Footer -->
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <a href="https://github.com/JalolbekJR" class="footer-author" target="_blank" rel="noopener noreferrer">
+          Designed &amp; Engineered by Jalolbek JR
+        </a>
+        <span class="footer-sep">·</span>
+        <a href="https://github.com/JalolbekJR/scrub" class="footer-link" target="_blank" rel="noopener noreferrer" aria-label="GitHub repository">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0 1 12 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+          </svg>
+          scrub
+        </a>
+        <span class="footer-sep">·</span>
+        <a href="https://boosty.to/unusual_one/donate" class="footer-link" target="_blank" rel="noopener noreferrer">Support this project</a>
+        <span class="footer-sep">·</span>
+        <span class="footer-badge">MIT License</span>
+        <span class="footer-sep">·</span>
+        <span class="footer-tagline">100% free · open source · nothing is uploaded</span>
+      </div>
+    </footer>
+
+    <!-- Success / support modal -->
+    <div class="modal-backdrop" id="celebrateBackdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="celebTitle" id="celebrateModal">
+        <button class="modal-close" id="celebClose" aria-label="Close dialog">&#10005;</button>
+
+        <div class="celeb-check" aria-hidden="true">
+          <svg viewBox="0 0 52 52">
+            <circle class="celeb-check-ring" cx="26" cy="26" r="24" />
+            <path class="celeb-check-mark" d="M14 27 l8 8 l16 -18" />
+          </svg>
+        </div>
+
+        <h2 class="celeb-title" id="celebTitle">Your file is clean</h2>
+        <p class="celeb-sub" id="celebSummary"></p>
+
+        <button class="btn btn-primary celeb-download" id="celebDownload">Download clean copy</button>
+
+        <div class="celeb-divider"><span>and if Scrub helped you…</span></div>
+
+        <div class="celeb-actions">
+          <button class="celeb-action" id="celebStar" type="button">⭐ Star on GitHub <span class="star-count" id="starCount"></span></button>
+          <button class="celeb-action" id="celebShare" type="button">↗ Share with a friend</button>
+          <button class="celeb-action" id="celebCopy" type="button">🔗 Copy link</button>
+          <button class="celeb-action celeb-support" id="celebSupport" type="button">Support on Boosty</button>
+        </div>
+
+        <p class="celeb-gratitude" id="celebGratitude" hidden></p>
+        <button class="celeb-later" id="celebLater" type="button">Maybe later</button>
+        <p class="celeb-foot">No account · no tracking · Scrub is free forever.</p>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

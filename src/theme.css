@@ -1,0 +1,119 @@
+:root {
+  --bg: #F5F4FB;
+  --surface: #FFFFFF;
+  --text: #1E1B33;
+  --text-muted: #5B5870;
+  --primary: #6667AB;
+  --primary-hover: #4F4F94;
+  --primary-soft: #E4E4F4;
+  --accent: #FF8A65;
+  --border: #E2E0EE;
+
+  --fs-xs: 12px;
+  --fs-sm: 14px;
+  --fs-base: 16px;
+  --fs-md: 20px;
+  --fs-lg: 24px;
+  --fs-xl: 32px;
+  --fs-2xl: 48px;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="dark"] {
+  --bg: #15131F;
+  --surface: #1E1B2E;
+  --text: #ECEAF6;
+  --text-muted: #A8A4C2;
+  --primary: #8F90D6;
+  --primary-hover: #A9AAE6;
+  --primary-soft: #2A2740;
+  --accent: #FF9E7D;
+  --border: #2E2A45;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* The [hidden] attribute must always beat component display rules
+   (e.g. .status-bar { display: flex }) — otherwise hidden panels leak through. */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+  font-size: var(--fs-base);
+  line-height: 1.6;
+  min-height: 100vh;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--primary-hover);
+  text-decoration: underline;
+}
+
+button {
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  border: none;
+  border-radius: 6px;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.theme-toggle {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  box-shadow: var(--shadow-sm);
+  z-index: 100;
+  transition: background-color 0.3s ease, border-color 0.3s ease, transform 0.3s ease;
+}
+
+.theme-toggle:hover {
+  background: var(--primary-soft);
+  transform: rotate(20deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
