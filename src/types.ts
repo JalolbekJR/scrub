@@ -24,6 +24,14 @@ export interface ScanResult {
   detections: Detection[];
 }
 
+export type DetectorStatus = 'success' | 'failed' | 'disabled';
+
+export interface DetectorHealth {
+  face: DetectorStatus;
+  ocr: DetectorStatus;
+  failureMessage?: string;
+}
+
 export interface FileLoadedDetail {
   canvas: HTMLCanvasElement;
   cleanImageData: ImageData;

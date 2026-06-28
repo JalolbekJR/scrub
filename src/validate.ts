@@ -3,8 +3,19 @@ export const LIMITS = {
   maxDim: 12000,
   maxPixels: 40 * 1000 * 1000,
   maxPdfPages: 50,
+  maxPdfPagesMobile: 15,
   pdfRenderScale: 1.5,
 } as const;
+
+// Auto-redacting every unopened page (tiled face detection + OCR, sequentially)
+// is heavy. Cap lower on small screens, where it is slowest and most likely to
+// exhaust memory.
+export function effectiveMaxPdfPages(): number {
+  const isMobile = typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(max-width: 640px)').matches;
+  return isMobile ? LIMITS.maxPdfPagesMobile : LIMITS.maxPdfPages;
+}
 
 export interface Validation { ok: boolean; reason?: string; kind?: 'image' | 'pdf'; }
 

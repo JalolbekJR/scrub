@@ -86,7 +86,10 @@ function spanBbox(line: PlacedWord[], mStart: number, mEnd: number): BoundingBox
 
 export type OcrProgress = (status: string, progress: number) => void;
 
-function runOcr(imageData: ImageData, onProgress?: OcrProgress): Promise<{ words: WordResult[]; ms: number }> {
+// `failed` distinguishes a genuine OCR failure (timeout / worker error / crash)
+// from a successful run that simply found no text. Callers that must fail closed
+// (e.g. auto-redacting an unopened PDF page) rely on this flag.
+function runOcr(imageData: ImageData, onProgress?: OcrProgress): Promise<{ words: WordResult[]; ms: number; failed: boolean }> {
   return new Promise((resolve) => {
     const w = getWorker();
     let settled = false;
@@ -97,18 +100,18 @@ function runOcr(imageData: ImageData, onProgress?: OcrProgress): Promise<{ words
       imageData.height
     );
 
-    const finish = (words: WordResult[], ms: number) => {
+    const finish = (words: WordResult[], ms: number, failed = false) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       w.onmessage = null;
       w.onerror = null;
-      resolve({ words, ms });
+      resolve({ words, ms, failed });
     };
 
     const timer = setTimeout(() => {
       console.warn('OCR timed out');
-      finish([], 0);
+      finish([], 0, true);
     }, OCR_TIMEOUT);
 
     w.onmessage = (e: MessageEvent<{ type?: string; status?: string; progress?: number; words?: WordResult[]; ms?: number; error?: string }>) => {
@@ -118,7 +121,7 @@ function runOcr(imageData: ImageData, onProgress?: OcrProgress): Promise<{ words
       }
       if (e.data.error) {
         console.error('OCR worker error:', e.data.error);
-        finish([], 0);
+        finish([], 0, true);
         return;
       }
       finish(e.data.words ?? [], e.data.ms ?? 0);
@@ -126,7 +129,7 @@ function runOcr(imageData: ImageData, onProgress?: OcrProgress): Promise<{ words
 
     w.onerror = (err) => {
       console.error('OCR worker crashed:', err.message);
-      finish([], 0);
+      finish([], 0, true);
     };
 
     w.postMessage({ imageData: copy, width: copy.width, height: copy.height }, [copy.data.buffer]);
@@ -134,7 +137,13 @@ function runOcr(imageData: ImageData, onProgress?: OcrProgress): Promise<{ words
 }
 
 export async function detectPii(imageData: ImageData, onProgress?: OcrProgress): Promise<Detection[]> {
-  const { words, ms } = await runOcr(imageData, onProgress);
+  const { words, ms, failed } = await runOcr(imageData, onProgress);
+  if (failed) {
+    // OCR could not run to completion. Throw so fail-closed callers block the
+    // export rather than treating "no words" as "no private text".
+    telOcrMs.textContent = 'error';
+    throw new Error('OCR failed or timed out');
+  }
   telOcrMs.textContent = `${ms}ms`;
 
   const detections: Detection[] = [];

@@ -1,7 +1,7 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { stripJpegMetadata } from './forensics';
 import { autoRedactCanvas } from './autoredact';
-import { LIMITS } from './validate';
+import { LIMITS, effectiveMaxPdfPages } from './validate';
 
 const mainCanvas = document.getElementById('mainCanvas') as HTMLCanvasElement;
 const btnDownload = document.getElementById('btnDownload') as HTMLButtonElement;
@@ -13,11 +13,23 @@ let pdfDoc: PDFDocumentProxy | undefined;
 
 export interface BuiltExport { blob: Blob; filename: string; isPdf: boolean; }
 
-export function setPdfContext(doc: PDFDocumentProxy, pageCount: number) {
+export interface BuildOptions {
+  // Reports page-level progress while sanitising a multi-page PDF.
+  onProgress?: (done: number, total: number) => void;
+  // Lets the user cancel a long PDF export between pages.
+  signal?: AbortSignal;
+}
+
+// Returns how the source page count was clamped, so the UI can warn the user
+// when later pages won't be included or when the export will be slow.
+export interface PdfContextInfo { sourcePages: number; exportedPages: number; truncated: boolean; }
+
+export function setPdfContext(doc: PDFDocumentProxy, pageCount: number): PdfContextInfo {
   pdfDoc = doc;
-  pdfPageCount = Math.min(pageCount, LIMITS.maxPdfPages);
+  pdfPageCount = Math.min(pageCount, effectiveMaxPdfPages());
   exportAsPdf = true;
   redactedPages.clear();
+  return { sourcePages: pageCount, exportedPages: pdfPageCount, truncated: pageCount > pdfPageCount };
 }
 
 export function resetExportContext() {
@@ -47,7 +59,7 @@ async function buildImageBlob(): Promise<Blob> {
   return stripMeta ? await stripJpegMetadata(raw) : raw;
 }
 
-async function buildPdfBlob(): Promise<Blob> {
+async function buildPdfBlob({ onProgress, signal }: BuildOptions = {}): Promise<Blob> {
   const { jsPDF } = await import('jspdf');
   const { getDocument, GlobalWorkerOptions } = await import('pdfjs-dist');
   GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
@@ -58,7 +70,10 @@ async function buildPdfBlob(): Promise<Blob> {
   pdf.setProperties({ title: '', subject: '', author: '', keywords: '', creator: '' });
   let first = true;
 
+  onProgress?.(0, pdfPageCount);
   for (let p = 1; p <= pdfPageCount; p++) {
+    if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
+
     const page = await doc.getPage(p);
     const vp = page.getViewport({ scale: LIMITS.pdfRenderScale });
 
@@ -69,6 +84,7 @@ async function buildPdfBlob(): Promise<Blob> {
     const stored = redactedPages.get(p);
     if (stored) {
       pdf.addImage(stored, 'JPEG', 0, 0, vp.width, vp.height);
+      onProgress?.(p, pdfPageCount);
       continue;
     }
 
@@ -79,17 +95,23 @@ async function buildPdfBlob(): Promise<Blob> {
     off.height = vp.height;
     const ctx = off.getContext('2d')!;
     await page.render({ canvasContext: ctx as unknown as CanvasRenderingContext2D, canvas: off, viewport: vp }).promise;
-    await autoRedactCanvas(off);
+    try {
+      await autoRedactCanvas(off);
+    } catch (err) {
+      // If a selected detector fails on an unreviewd page, block export (fail-closed).
+      throw new Error(`Page ${p} auto-redaction failed: ${String(err)}`);
+    }
     pdf.addImage(off.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, vp.width, vp.height);
+    onProgress?.(p, pdfPageCount);
   }
 
   return pdf.output('blob');
 }
 
 // Produce the final sanitised file (does not write to disk).
-export async function buildExport(): Promise<BuiltExport> {
+export async function buildExport(opts: BuildOptions = {}): Promise<BuiltExport> {
   if (exportAsPdf && pdfPageCount > 1) {
-    return { blob: await buildPdfBlob(), filename: 'scrubbed.pdf', isPdf: true };
+    return { blob: await buildPdfBlob(opts), filename: 'scrubbed.pdf', isPdf: true };
   }
   return { blob: await buildImageBlob(), filename: 'scrubbed.jpg', isPdf: false };
 }

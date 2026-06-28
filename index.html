@@ -128,12 +128,24 @@
           <span id="statusText">Ready</span>
         </div>
 
+        <!-- PDF export progress (multi-page sanitisation) -->
+        <div class="export-progress" id="exportProgress" hidden aria-live="polite">
+          <div class="export-progress-head">
+            <span id="exportProgressText">Sanitising pages…</span>
+            <button type="button" class="btn-cancel-export" id="btnCancelExport" aria-label="Cancel export">Cancel</button>
+          </div>
+          <div class="export-progress-track"><div class="export-progress-bar" id="exportProgressBar"></div></div>
+        </div>
+
         <!-- PDF page nav (hidden until PDF loaded) -->
         <div class="pdf-nav" id="pdfNav" hidden>
           <button id="prevPage" aria-label="Previous page">&#8592;</button>
           <span id="pageInfo">Page 1 of 1</span>
           <button id="nextPage" aria-label="Next page">&#8594;</button>
         </div>
+
+        <!-- Large-PDF heads-up (shown only for multi-page PDFs) -->
+        <p class="pdf-warning" id="pdfWarning" hidden aria-live="polite"></p>
 
         <!-- Canvas area -->
         <div class="canvas-area" id="canvasArea" hidden>

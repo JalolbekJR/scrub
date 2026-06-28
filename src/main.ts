@@ -100,10 +100,22 @@ document.addEventListener('file:loaded', async (e: Event) => {
   resetView();
   lastBuilt = null;
 
+  const pdfWarning = document.getElementById('pdfWarning') as HTMLParagraphElement;
   if (isPdf && pdfDoc) {
-    setPdfContext(pdfDoc, pageCount);
+    const info = setPdfContext(pdfDoc, pageCount);
+    // Warn before the heavy export: every unopened page is auto-scanned on export.
+    if (info.truncated) {
+      pdfWarning.textContent = `⚠ This PDF has ${info.sourcePages} pages — only the first ${info.exportedPages} will be processed and exported. Split the file to cover the rest.`;
+      pdfWarning.hidden = false;
+    } else if (info.exportedPages >= 10) {
+      pdfWarning.textContent = `Heads up: all ${info.exportedPages} pages are scanned & redacted on export, which can take a while. You can cancel mid-export.`;
+      pdfWarning.hidden = false;
+    } else {
+      pdfWarning.hidden = true;
+    }
   } else {
     resetExportContext();
+    pdfWarning.hidden = true;
   }
 
   originalImageData = new ImageData(
@@ -128,6 +140,9 @@ document.addEventListener('file:loaded', async (e: Event) => {
   await forensicsGate;
   if (gen !== activeGen) return;
 
+  let faceFailed = false;
+  let ocrFailed = false;
+
   setPhase('faces');
   phaseLog('faces');
   try {
@@ -142,6 +157,7 @@ document.addEventListener('file:loaded', async (e: Event) => {
     currentDetections.push(...faceDetections);
     updateCountBadge('countFaces', faces.length);
   } catch (err) {
+    faceFailed = true;
     console.error('Face detection failed:', err);
   }
 
@@ -161,6 +177,7 @@ document.addEventListener('file:loaded', async (e: Event) => {
     updateCountBadge('countCards',  countType('card'));
     updateCountBadge('countNames',  countType('name'));
   } catch (err) {
+    ocrFailed = true;
     console.error('PII detection failed:', err);
   }
 
@@ -187,7 +204,17 @@ document.addEventListener('file:loaded', async (e: Event) => {
     ? `  ${metaItemsFound} hidden metadata item${metaItemsFound !== 1 ? 's' : ''} will be stripped on export.`
     : '  No hidden metadata.';
 
-  controlsResult.className = 'controls-result';
+  // Be honest when a detector didn't run — "nothing found" must not be confused
+  // with "the scanner failed". Prompt the user to review manually.
+  const warnings: string[] = [];
+  if (faceFailed) warnings.push('face detection');
+  if (ocrFailed) warnings.push('text detection');
+  const detectorWarning = warnings.length > 0
+    ? `⚠ ${warnings.join(' and ')} did not run on this image — review and use Draw redaction box to cover anything sensitive manually.`
+    : '';
+  if (detectorWarning) msg += `  ${detectorWarning}`;
+
+  controlsResult.className = warnings.length > 0 ? 'controls-result warn' : 'controls-result';
   controlsResult.textContent = msg;
 
   markFound('itemFaces',  countType('face')  > 0);
@@ -246,6 +273,34 @@ document.addEventListener('file:loaded', async (e: Event) => {
   }
 });
 
+// ── PDF export progress + cancel ──────────────────────────────────────────────
+
+const exportProgress     = document.getElementById('exportProgress')     as HTMLDivElement;
+const exportProgressText = document.getElementById('exportProgressText') as HTMLSpanElement;
+const exportProgressBar  = document.getElementById('exportProgressBar')  as HTMLDivElement;
+const btnCancelExport    = document.getElementById('btnCancelExport')    as HTMLButtonElement;
+
+let exportController: AbortController | null = null;
+
+btnCancelExport.addEventListener('click', () => exportController?.abort());
+
+function showExportProgress() {
+  exportProgressBar.style.width = '0%';
+  exportProgressText.textContent = 'Sanitising pages…';
+  exportProgress.hidden = false;
+}
+function updateExportProgress(done: number, total: number) {
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  exportProgressBar.style.width = `${pct}%`;
+  exportProgressText.textContent = done === 0
+    ? `Sanitising ${total} pages…`
+    : `Sanitising page ${done} of ${total}…`;
+}
+function hideExportProgress() {
+  exportProgress.hidden = true;
+  exportController = null;
+}
+
 // ── Redact button ─────────────────────────────────────────────────────────────
 
 btnRedact.addEventListener('click', async () => {
@@ -277,12 +332,29 @@ btnRedact.addEventListener('click', async () => {
   // Build the final file and verify it BEFORE offering the download, so the
   // success message reflects the actual exported bytes — not an assumption.
   setStatus('Re-encoding & verifying the clean file…', true);
+  exportController = new AbortController();
+  showExportProgress();
   try {
-    lastBuilt = await buildExport();
-  } catch {
-    setStatus('Could not build the clean file. Please try again.', false);
+    lastBuilt = await buildExport({
+      onProgress: updateExportProgress,
+      signal: exportController.signal,
+    });
+  } catch (err) {
+    hideExportProgress();
+    const msg = String(err);
+    if ((err as DOMException)?.name === 'AbortError') {
+      setStatus('Export cancelled. Nothing was downloaded.', false);
+      return;
+    }
+    setStatus(
+      msg.includes('auto-redaction failed')
+        ? `Export blocked: ${msg}. Please manually review and redact this page.`
+        : `Could not build the clean file: ${msg}`,
+      false
+    );
     return;
   }
+  hideExportProgress();
   const result = lastBuilt.isPdf ? await verifyCleanPdf(lastBuilt.blob) : await verifyClean(lastBuilt.blob);
   renderVerify(result);
   enableDownload();
@@ -308,8 +380,29 @@ let lastBuilt: BuiltExport | null = null;
 async function doDownload() {
   if (!lastBuilt) {
     setStatus('Preparing the clean file…', true);
-    try { lastBuilt = await buildExport(); }
-    catch { setStatus('Could not build the clean file.', false); return; }
+    exportController = new AbortController();
+    showExportProgress();
+    try {
+      lastBuilt = await buildExport({
+        onProgress: updateExportProgress,
+        signal: exportController.signal,
+      });
+    } catch (err) {
+      hideExportProgress();
+      const msg = String(err);
+      if ((err as DOMException)?.name === 'AbortError') {
+        setStatus('Export cancelled. Nothing was downloaded.', false);
+        return;
+      }
+      setStatus(
+        msg.includes('auto-redaction failed')
+          ? `Export blocked: ${msg}. Please manually review and redact this page.`
+          : `Could not build the clean file: ${msg}`,
+        false
+      );
+      return;
+    }
+    hideExportProgress();
     const result = lastBuilt.isPdf ? await verifyCleanPdf(lastBuilt.blob) : await verifyClean(lastBuilt.blob);
     renderVerify(result);
   }

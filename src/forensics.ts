@@ -310,8 +310,11 @@ const PDF_THREAT_TOKENS = ['/JavaScript', '/JS', '/OpenAction', '/AA', '/Launch'
 // Info-dictionary fields that would carry user-identifying text.
 const PDF_META_RE = /\/(Author|Title|Subject|Keywords|Creator)\s*\(([^)]*)\)/g;
 
-// Real structural verification of an exported PDF: confirms the bytes carry no
-// scripts, embedded files, forms, user metadata, XMP packet, or trailing junk.
+// Token-level verification of the Scrub-generated PDF: confirms the produced
+// bytes carry no scripts, embedded files, forms, user metadata, XMP packet, or
+// trailing junk. This is a byte-pattern scan, not a full PDF parse — it is
+// reliable here because Scrub writes the output itself (uncompressed via jsPDF),
+// so forbidden constructs aren't hidden inside compressed object streams.
 // (Producer / CreationDate written by the generator carry no user data and are
 // not treated as leaks.)
 export async function verifyCleanPdf(blob: Blob): Promise<VerifyResult> {
