@@ -26,5 +26,6 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
-      - run: npx playwright install --with-deps
-      - run: npm run e2e
+      # NOTE: e2e (Playwright) is a local-only suite — it drives real face/text
+      # detection against private fixtures in public/test/, which are gitignored
+      # and never pushed. Run it locally with `npm run e2e`.
