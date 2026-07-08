@@ -1,9 +1,0 @@
-# Cloudflare Pages project configuration.
-#
-# The Git build pipeline runs `npm run build` (which emits ./dist) and then
-# `npx wrangler pages deploy dist`. That deploy step needs the Pages project
-# name — without it wrangler fails with "Missing Pages project name". Wrangler
-# reads it from here, so the name below MUST match the existing Pages project
-# exactly (do not rename — that would create a second project / URL).
-name = "scrub"
-pages_build_output_dir = "./dist"
