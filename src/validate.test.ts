@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sniffKind, safeScale, LIMITS } from './validate';
+import { sniffKind, safeScale, safeBaseName, LIMITS } from './validate';
 
 function bytes(...vals: number[]): Uint8Array {
   return new Uint8Array(vals);
@@ -61,5 +61,46 @@ describe('safeScale — decompression-bomb clamping', () => {
 
   it('handles degenerate input', () => {
     expect(safeScale(0, 0)).toBe(1);
+  });
+});
+
+describe('safeBaseName — download / ZIP-entry filename hardening', () => {
+  it('keeps a normal name and drops the extension', () => {
+    expect(safeBaseName('vacation.jpg')).toBe('vacation');
+  });
+
+  it('strips directory components (defuses path traversal / zip-slip)', () => {
+    expect(safeBaseName('../../etc/passwd.png')).toBe('passwd');
+    expect(safeBaseName('C:\\Windows\\System32\\evil.jpg')).toBe('evil');
+    expect(safeBaseName('a/b/c/photo.webp')).toBe('photo');
+  });
+
+  it('never yields a name containing a path separator', () => {
+    for (const n of ['../x.jpg', 'a\\b.png', '/root/y.pdf', 'p/q\\r.gif']) {
+      const out = safeBaseName(n);
+      expect(out.includes('/')).toBe(false);
+      expect(out.includes('\\')).toBe(false);
+    }
+  });
+
+  it('replaces illegal filesystem characters', () => {
+    expect(safeBaseName('a:b*c?"<>|.jpg')).not.toMatch(/[:*?"<>|]/);
+  });
+
+  it('falls back to "file" for empty / dot-only / extension-only input', () => {
+    expect(safeBaseName('')).toBe('file');
+    expect(safeBaseName('.jpg')).toBe('file');
+    expect(safeBaseName('...')).toBe('file');
+    expect(safeBaseName('/')).toBe('file');
+  });
+
+  it('bounds absurdly long names', () => {
+    const out = safeBaseName('x'.repeat(5000) + '.jpg');
+    expect(out.length).toBeLessThanOrEqual(LIMITS.maxFilenameLen);
+  });
+
+  it('removes control characters', () => {
+    const withCtrl = 'ab' + String.fromCharCode(1) + String.fromCharCode(0x7f) + 'cd.jpg';
+    expect(safeBaseName(withCtrl)).toBe('abcd');
   });
 });

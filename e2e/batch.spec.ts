@@ -48,4 +48,24 @@ test.describe('Bundle (multi-file) upload flow', () => {
     expect(dl.suggestedFilename()).toBe('scrubbed-bundle.zip');
     expect(downloads).toEqual(['scrubbed-bundle.zip']);
   });
+
+  // Abuse/edge case: one unsupported (or corrupt/malicious) file in a bundle
+  // must not stall the whole run — the queue has to advance past it.
+  test('a bad file in the bundle does not hang the scan', async ({ page }) => {
+    await page.goto('/');
+    await page.locator('#fileInput').setInputFiles([
+      'public/test/face.jpg',
+      'public/test/README.txt', // not an image/PDF — fails validation
+    ]);
+
+    // The review modal still opens (proving the bad file advanced the queue),
+    // with a row for each file.
+    await page.waitForFunction(
+      () => document.getElementById('batchBackdrop')?.hidden === false,
+      { timeout: 90000 }
+    );
+    expect(await page.locator('.batch-file-row').count()).toBe(2);
+    // The unsupported file shows as nothing-to-redact rather than blocking.
+    await expect(page.locator('.batch-none')).toHaveCount(1);
+  });
 });

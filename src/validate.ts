@@ -5,7 +5,34 @@ export const LIMITS = {
   maxPdfPages: 50,
   maxPdfPagesMobile: 15,
   pdfRenderScale: 1.5,
+  // Bundle guards: cap how many files and how many total bytes one batch may
+  // hold, so a user can't exhaust the tab's memory by dropping thousands of
+  // files (each is still individually capped by maxBytes).
+  maxBatchFiles: 30,
+  maxBatchBytes: 250 * 1024 * 1024,
+  maxFilenameLen: 120,
 } as const;
+
+// Make a user-supplied filename safe to use as a download name or ZIP entry:
+// drop any directory components (defuses zip-slip / path traversal), strip
+// control and illegal characters, and bound the length. Never returns ''.
+export function safeBaseName(name: string): string {
+  let base = String(name ?? '')
+    .replace(/^.*[\\/]/, '')  // strip any path prefix
+    .replace(/\.[^.]*$/, ''); // strip the extension
+  // Remove control chars (0x00–0x1f, 0x7f) without a control-char regex literal.
+  base = Array.from(base).filter((ch) => {
+    const c = ch.charCodeAt(0);
+    return c >= 0x20 && c !== 0x7f;
+  }).join('');
+  base = base
+    .replace(/[\\/:*?"<>|]/g, '_') // illegal on common filesystems
+    .replace(/\s+/g, ' ')
+    .replace(/^[.\s]+|[.\s]+$/g, '') // no leading/trailing dots or spaces
+    .trim();
+  if (base.length === 0) base = 'file';
+  return base.slice(0, LIMITS.maxFilenameLen);
+}
 
 // Auto-redacting every unopened page (tiled face detection + OCR, sequentially)
 // is heavy. Cap lower on small screens, where it is slowest and most likely to

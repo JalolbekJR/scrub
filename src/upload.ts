@@ -1,5 +1,5 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { LIMITS, validateFile, safeScale, nextGeneration, currentGeneration } from './validate';
+import { LIMITS, validateFile, safeScale, nextGeneration, currentGeneration, effectiveMaxPdfPages } from './validate';
 
 const dropZone = document.getElementById('dropZone') as HTMLDivElement;
 const fileInput = document.getElementById('fileInput') as HTMLInputElement;
@@ -106,14 +106,15 @@ async function loadPdf(file: File, gen: number) {
   const pdfParams = { data: arrayBuffer, isEvalSupported: false, disableAutoFetch: true, disableStream: true };
   const doc = await getDocument(pdfParams as unknown as Parameters<typeof getDocument>[0]).promise;
 
-  if (doc.numPages > LIMITS.maxPdfPages) {
-    setError(`PDF has ${doc.numPages} pages — only the first ${LIMITS.maxPdfPages} can be processed.`);
+  const maxPages = effectiveMaxPdfPages();
+  if (doc.numPages > maxPages) {
+    setError(`PDF has ${doc.numPages} pages — only the first ${maxPages} can be processed.`);
   }
 
   canvasArea.hidden = false;
   controlsPanel.hidden = false;
   telemetry.hidden = false;
-  const usablePages = Math.min(doc.numPages, LIMITS.maxPdfPages);
+  const usablePages = Math.min(doc.numPages, maxPages);
   pdfNav.hidden = usablePages <= 1;
 
   let currentPage = 1;
@@ -141,11 +142,18 @@ async function loadPdf(file: File, gen: number) {
 export async function handleFile(file: File) {
   if (busy) return;
 
+  // Allocate the generation up front so a validation failure can still emit a
+  // `file:failed` the batch queue will act on — otherwise one bad file in a
+  // bundle would leave the queue waiting forever.
+  const gen = nextGeneration();
   const v = await validateFile(file);
-  if (!v.ok) { setError(v.reason ?? 'Unsupported file.'); return; }
+  if (!v.ok) {
+    setError(v.reason ?? 'Unsupported file.');
+    document.dispatchEvent(new CustomEvent('file:failed', { detail: { gen, file, reason: v.reason } }));
+    return;
+  }
 
   busy = true;
-  const gen = nextGeneration();
   try {
     document.dispatchEvent(new CustomEvent('file:raw', { detail: { file, gen } }));
     if (v.kind === 'pdf') await loadPdf(file, gen);
@@ -153,7 +161,7 @@ export async function handleFile(file: File) {
   } catch (err) {
     console.error('file processing failed');
     setError(err instanceof Error ? err.message : 'Could not process this file.');
-    document.dispatchEvent(new CustomEvent('file:failed', { detail: { gen } }));
+    document.dispatchEvent(new CustomEvent('file:failed', { detail: { gen, file } }));
   } finally {
     busy = false;
   }

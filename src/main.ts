@@ -16,9 +16,10 @@ import { inspectFile, verifyClean, verifyCleanPdf, type ForensicReport, type Fin
 import { startScan, setPhase, phaseLog, updateOcrProgress, finishScan } from './scanner';
 import { celebrate } from './celebrate';
 import { initTicker } from './ticker';
-import { enqueue, initQueue, getBatchPhase, fileScanned, fileFinished, startRedactPhase, getCurrentScanResult } from './queue';
+import { enqueue, initQueue, getBatchPhase, isBatchActive, fileScanned, fileFinished, startRedactPhase, getCurrentScanResult } from './queue';
 import type { ScanResult } from './types';
 import { handleFile } from './upload';
+import { LIMITS, safeBaseName } from './validate';
 import type { Detection, DetectionType, FileLoadedDetail } from './types';
 import { zip } from 'fflate';
 
@@ -50,8 +51,44 @@ initQueue(
   () => showBatchComplete(),
 );
 
-initUpload((files) => enqueue(files));
+initUpload((files) => acceptFiles(files));
 initTicker();
+
+// Guarded entry for every upload/drop: refuse new work while a batch is still
+// running or awaiting review, and cap how much a single bundle may hold so the
+// tab can't be memory-exhausted by dropping thousands of (or huge) files.
+function acceptFiles(files: File[]) {
+  if (isBatchActive() || !batchBackdrop.hidden) {
+    setStatus('Still working on your current files — please wait for them to finish.', false);
+    return;
+  }
+
+  let batch = files;
+  const notes: string[] = [];
+
+  if (batch.length > LIMITS.maxBatchFiles) {
+    notes.push(`only the first ${LIMITS.maxBatchFiles} of ${batch.length} files were queued`);
+    batch = batch.slice(0, LIMITS.maxBatchFiles);
+  }
+
+  // Keep files until the running total would exceed the bundle byte cap.
+  const kept: File[] = [];
+  let running = 0;
+  for (const f of batch) {
+    if (running + f.size > LIMITS.maxBatchBytes) { notes.push(`total size capped at ${Math.round(LIMITS.maxBatchBytes / 1024 / 1024)} MB`); break; }
+    running += f.size;
+    kept.push(f);
+  }
+  batch = kept;
+
+  if (batch.length === 0) {
+    setStatus('Those files are too large to process together — try fewer or smaller files.', false);
+    return;
+  }
+  if (notes.length > 0) setStatus(`Heads up: ${notes.join('; ')}.`, false);
+
+  enqueue(batch);
+}
 
 const btnRedact  = document.getElementById('btnRedact')  as HTMLButtonElement;
 const chkFaces   = document.getElementById('chkFaces')   as HTMLInputElement;
@@ -271,7 +308,8 @@ document.addEventListener('file:loaded', async (e: Event) => {
 
     // Build & verify the blob, but DON'T download yet — collect it and offer a
     // single ZIP download from the finished popup once the whole bundle is done.
-    const baseName = stored.file.name.replace(/\.[^.]+$/, '');
+    // Sanitise the name so it's safe as a ZIP entry (no path traversal / slip).
+    const baseName = safeBaseName(stored.file.name);
     const metaRemoved = sel.meta ? stored.meta : 0;
     try {
       const blob = await buildBatchBlob(sel.meta);
@@ -339,83 +377,42 @@ function hideExportProgress() {
 
 // ── Redact button ─────────────────────────────────────────────────────────────
 
+let redacting = false;
 btnRedact.addEventListener('click', async () => {
+  // Ignore repeat clicks while a redact/export is already in flight, so button
+  // spam can't launch overlapping builds or stack multiple finished popups.
+  if (redacting) return;
   if (!currentCanvas || !originalImageData) return;
+  redacting = true;
+  btnRedact.setAttribute('aria-busy', 'true');
 
-  const ctx = currentCanvas.getContext('2d')!;
-  ctx.putImageData(originalImageData, 0, 0);
-
-  const toRedact = currentDetections.filter((d) => {
-    if (d.type === 'face'  && !chkFaces.checked)  return false;
-    if (d.type === 'email' && !chkEmails.checked) return false;
-    if (d.type === 'phone' && !chkPhones.checked) return false;
-    if (d.type === 'card'  && !chkCards.checked)  return false;
-    if (d.type === 'name'  && !chkNames.checked)  return false;
-    return true;
-  });
-
-  redactAll(currentCanvas, toRedact.map((d) => d.bbox));
-  clearOverlay();
-
-  if (currentIsPdf) {
-    storeRedactedPage(currentPageNum, currentCanvas);
-  }
-  showScrubber(originalImageData, currentCanvas);
-
-  btnRedact.classList.add('pulsed', 'done');
-  setTimeout(() => btnRedact.classList.remove('pulsed', 'done'), 2000);
-
-  // Build the final file and verify it BEFORE offering the download, so the
-  // success message reflects the actual exported bytes — not an assumption.
-  setStatus('Re-encoding & verifying the clean file…', true);
-  exportController = new AbortController();
-  showExportProgress();
   try {
-    lastBuilt = await buildExport({
-      onProgress: updateExportProgress,
-      signal: exportController.signal,
+    const ctx = currentCanvas.getContext('2d')!;
+    ctx.putImageData(originalImageData, 0, 0);
+
+    const toRedact = currentDetections.filter((d) => {
+      if (d.type === 'face'  && !chkFaces.checked)  return false;
+      if (d.type === 'email' && !chkEmails.checked) return false;
+      if (d.type === 'phone' && !chkPhones.checked) return false;
+      if (d.type === 'card'  && !chkCards.checked)  return false;
+      if (d.type === 'name'  && !chkNames.checked)  return false;
+      return true;
     });
-  } catch (err) {
-    hideExportProgress();
-    const msg = String(err);
-    if ((err as DOMException)?.name === 'AbortError') {
-      setStatus('Export cancelled. Nothing was downloaded.', false);
-      return;
+
+    redactAll(currentCanvas, toRedact.map((d) => d.bbox));
+    clearOverlay();
+
+    if (currentIsPdf) {
+      storeRedactedPage(currentPageNum, currentCanvas);
     }
-    setStatus(
-      msg.includes('auto-redaction failed')
-        ? `Export blocked: ${msg}. Please manually review and redact this page.`
-        : `Could not build the clean file: ${msg}`,
-      false
-    );
-    return;
-  }
-  hideExportProgress();
-  const result = lastBuilt.isPdf ? await verifyCleanPdf(lastBuilt.blob) : await verifyClean(lastBuilt.blob);
-  renderVerify(result);
-  enableDownload();
+    showScrubber(originalImageData, currentCanvas);
 
-  setStatus(
-    result.clean
-      ? `${toRedact.length} item${toRedact.length !== 1 ? 's' : ''} redacted · verified clean — ready to download`
-      : `${toRedact.length} redacted — verification flagged residual data (see panel)`,
-    false, true,
-  );
+    btnRedact.classList.add('pulsed', 'done');
+    setTimeout(() => btnRedact.classList.remove('pulsed', 'done'), 2000);
 
-  const stripMeta = (document.getElementById('chkMetadata') as HTMLInputElement).checked;
-  celebrate(
-    { redacted: toRedact.length, metaItems: stripMeta ? metaItemsFound : 0, verifiedClean: result.clean },
-    () => { void doDownload(); }
-  );
-});
-
-const btnDownload = document.getElementById('btnDownload') as HTMLButtonElement;
-
-let lastBuilt: BuiltExport | null = null;
-
-async function doDownload() {
-  if (!lastBuilt) {
-    setStatus('Preparing the clean file…', true);
+    // Build the final file and verify it BEFORE offering the download, so the
+    // success message reflects the actual exported bytes — not an assumption.
+    setStatus('Re-encoding & verifying the clean file…', true);
     exportController = new AbortController();
     showExportProgress();
     try {
@@ -441,8 +438,69 @@ async function doDownload() {
     hideExportProgress();
     const result = lastBuilt.isPdf ? await verifyCleanPdf(lastBuilt.blob) : await verifyClean(lastBuilt.blob);
     renderVerify(result);
+    enableDownload();
+
+    setStatus(
+      result.clean
+        ? `${toRedact.length} item${toRedact.length !== 1 ? 's' : ''} redacted · verified clean — ready to download`
+        : `${toRedact.length} redacted — verification flagged residual data (see panel)`,
+      false, true,
+    );
+
+    const stripMeta = (document.getElementById('chkMetadata') as HTMLInputElement).checked;
+    celebrate(
+      { redacted: toRedact.length, metaItems: stripMeta ? metaItemsFound : 0, verifiedClean: result.clean },
+      () => { void doDownload(); }
+    );
+  } finally {
+    redacting = false;
+    btnRedact.removeAttribute('aria-busy');
   }
-  await triggerDownload(lastBuilt.filename, lastBuilt.blob);
+});
+
+const btnDownload = document.getElementById('btnDownload') as HTMLButtonElement;
+
+let lastBuilt: BuiltExport | null = null;
+
+let downloading = false;
+async function doDownload() {
+  // Re-entrancy guard: repeated clicks must not build twice or open several
+  // save dialogs at once.
+  if (downloading) return;
+  downloading = true;
+  try {
+    if (!lastBuilt) {
+      setStatus('Preparing the clean file…', true);
+      exportController = new AbortController();
+      showExportProgress();
+      try {
+        lastBuilt = await buildExport({
+          onProgress: updateExportProgress,
+          signal: exportController.signal,
+        });
+      } catch (err) {
+        hideExportProgress();
+        const msg = String(err);
+        if ((err as DOMException)?.name === 'AbortError') {
+          setStatus('Export cancelled. Nothing was downloaded.', false);
+          return;
+        }
+        setStatus(
+          msg.includes('auto-redaction failed')
+            ? `Export blocked: ${msg}. Please manually review and redact this page.`
+            : `Could not build the clean file: ${msg}`,
+          false
+        );
+        return;
+      }
+      hideExportProgress();
+      const result = lastBuilt.isPdf ? await verifyCleanPdf(lastBuilt.blob) : await verifyClean(lastBuilt.blob);
+      renderVerify(result);
+    }
+    await triggerDownload(lastBuilt.filename, lastBuilt.blob);
+  } finally {
+    downloading = false;
+  }
 }
 
 btnDownload.addEventListener('click', () => { void doDownload(); });
@@ -543,6 +601,9 @@ let batchRedactedTotal = 0;
 let batchMetaTotal = 0;
 
 document.getElementById('btnBatchRedact')!.addEventListener('click', () => {
+  // First click hides the modal; a queued second click sees it hidden and bails,
+  // so the redact pass can't be started twice.
+  if (batchBackdrop.hidden) return;
   batchBackdrop.hidden = true;
   batchOutputs = [];
   batchBreakdown = [];
@@ -867,9 +928,25 @@ document.addEventListener('file:raw', (e: Event) => {
   })();
 });
 
-// If decoding/loading failed, stop the scanner cleanly so the UI never hangs.
+// If a file couldn't be validated/decoded, advance the batch queue so one bad
+// (corrupt, spoofed, oversized, or malicious) file can't stall an entire bundle
+// — then stop the scanner cleanly so the UI never hangs.
 document.addEventListener('file:failed', (e: Event) => {
-  const { gen } = (e as CustomEvent<{ gen: number }>).detail;
+  const { gen, file } = (e as CustomEvent<{ gen: number; file?: File }>).detail;
+
+  const phase = getBatchPhase();
+  if (phase === 'scan') {
+    // Record an empty result so scan/redact indices stay aligned across files.
+    fileScanned({
+      file: file ?? currentFile ?? new File([], 'file'),
+      faces: 0, emails: 0, phones: 0, cards: 0, names: 0, meta: 0, detections: [],
+    });
+  } else if (phase === 'redact') {
+    if (file) batchBreakdown.push({ name: file.name, summary: 'could not process — skipped' });
+    batchAllClean = false;
+    fileFinished();
+  }
+
   if (gen !== activeGen) return;
   dropZone.classList.remove('detecting');
   finishScan();
