@@ -15,7 +15,7 @@ test.describe('Bundle (multi-file) upload flow', () => {
       'public/test/screenshot.jpg',
     ]);
 
-    // 1) Review modal appears after scanning all files.
+    // 1) Review modal appears after scanning all files, one row per file.
     await page.waitForFunction(
       () => document.getElementById('batchBackdrop')?.hidden === false,
       { timeout: 90000 }
@@ -23,7 +23,11 @@ test.describe('Bundle (multi-file) upload flow', () => {
     expect(downloads, 'no download at upload/scan time').toHaveLength(0);
     expect(await page.locator('.batch-file-row').count()).toBe(2);
 
-    // 2) Press "Redact all" → the finished popup appears, still NO download yet.
+    // Per-file, per-type toggle chips are present and pre-selected (.on).
+    const chips = page.locator('.batch-chip.on');
+    expect(await chips.count()).toBeGreaterThan(0);
+
+    // 2) Press "Redact selected" → the finished popup appears, still NO download.
     await page.locator('#btnBatchRedact').click();
     await page.waitForFunction(
       () => document.getElementById('celebrateBackdrop')?.hidden === false,
@@ -31,14 +35,17 @@ test.describe('Bundle (multi-file) upload flow', () => {
     );
     expect(downloads, 'no silent download — user must click Download').toHaveLength(0);
 
-    // The popup carries the support / GitHub affordances.
+    // The popup carries the support / GitHub affordances + a per-file breakdown.
     await expect(page.locator('#celebSupport')).toBeVisible();
     await expect(page.locator('#celebStar')).toBeVisible();
+    await expect(page.locator('#celebBreakdown')).toBeVisible();
+    expect(await page.locator('.celeb-breakdown-list li').count()).toBe(2);
 
-    // 3) Download happens only from the finished popup.
-    const firstDownload = page.waitForEvent('download', { timeout: 30000 });
+    // 3) One click → one ZIP download containing the whole bundle.
+    const zipDownload = page.waitForEvent('download', { timeout: 30000 });
     await page.locator('#celebDownload').click();
-    await firstDownload;
-    expect(downloads.length).toBeGreaterThan(0);
+    const dl = await zipDownload;
+    expect(dl.suggestedFilename()).toBe('scrubbed-bundle.zip');
+    expect(downloads).toEqual(['scrubbed-bundle.zip']);
   });
 });

@@ -293,9 +293,9 @@
         <h2 class="batch-modal-title" id="batchModalTitle">Scan complete</h2>
         <p class="batch-modal-summary" id="batchModalSummary"></p>
         <div class="batch-file-list" id="batchFileList"></div>
-        <p class="batch-modal-note">Your checkboxes above apply — untick anything you want to keep before redacting.</p>
+        <p class="batch-modal-note">Each tag is on by default — untick anything you want to keep. Files are re-encoded clean and delivered as one ZIP.</p>
         <div class="batch-modal-actions">
-          <button class="btn btn-primary" id="btnBatchRedact">Redact all &amp; download</button>
+          <button class="btn btn-primary" id="btnBatchRedact">Redact selected</button>
           <button class="btn btn-secondary" id="btnBatchCancel">Cancel</button>
         </div>
       </div>
@@ -315,6 +315,8 @@
 
         <h2 class="celeb-title" id="celebTitle">Your file is clean</h2>
         <p class="celeb-sub" id="celebSummary"></p>
+
+        <div class="celeb-breakdown" id="celebBreakdown" hidden></div>
 
         <button class="btn btn-primary celeb-download" id="celebDownload">Download clean copy</button>
 

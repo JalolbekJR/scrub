@@ -53,8 +53,9 @@ function blobFromCanvas(canvas: HTMLCanvasElement, quality = 0.95): Promise<Blob
   });
 }
 
-async function buildImageBlob(): Promise<Blob> {
-  const stripMeta = (document.getElementById('chkMetadata') as HTMLInputElement | null)?.checked ?? true;
+async function buildImageBlob(stripMetaOverride?: boolean): Promise<Blob> {
+  const stripMeta = stripMetaOverride
+    ?? ((document.getElementById('chkMetadata') as HTMLInputElement | null)?.checked ?? true);
   const raw = await blobFromCanvas(mainCanvas);
   return stripMeta ? await stripJpegMetadata(raw) : raw;
 }
@@ -147,8 +148,9 @@ export async function triggerDownload(filename: string, blob: Blob) {
 }
 
 // Batch mode: build one file's sanitised blob WITHOUT downloading. The bundle
-// flow collects every file's blob and offers a single download from the finished
-// dialog (same as single-file) — so it never silently saves behind the user's back.
-export async function buildBatchBlob(): Promise<Blob> {
-  return buildImageBlob();
+// flow collects every file's blob and offers a single ZIP download from the
+// finished dialog — so it never silently saves behind the user's back.
+// `stripMeta` comes from this file's own choice in the review modal.
+export async function buildBatchBlob(stripMeta: boolean): Promise<Blob> {
+  return buildImageBlob(stripMeta);
 }

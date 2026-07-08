@@ -19,7 +19,8 @@ import { initTicker } from './ticker';
 import { enqueue, initQueue, getBatchPhase, fileScanned, fileFinished, startRedactPhase, getCurrentScanResult } from './queue';
 import type { ScanResult } from './types';
 import { handleFile } from './upload';
-import type { Detection, FileLoadedDetail } from './types';
+import type { Detection, DetectionType, FileLoadedDetail } from './types';
+import { zip } from 'fflate';
 
 initTheme();
 
@@ -254,38 +255,59 @@ document.addEventListener('file:loaded', async (e: Event) => {
     // Use stored detections from scan phase — no re-detection
     const stored = getCurrentScanResult();
     if (!stored || !currentCanvas || !originalImageData) { fileFinished(); return; }
+
+    // Honour this file's OWN choices from the review modal (which types, and
+    // whether to strip its hidden metadata). Fall back to "redact everything"
+    // if a selection somehow wasn't recorded.
+    const sel = batchSelections.get(stored)
+      ?? { types: new Set<DetectionType>(['face', 'email', 'phone', 'card', 'name']), meta: true };
+
     const ctx = currentCanvas.getContext('2d')!;
     ctx.putImageData(originalImageData, 0, 0);
-    const toRedact = stored.detections.filter((d) => {
-      if (d.type === 'face'  && !chkFaces.checked)  return false;
-      if (d.type === 'email' && !chkEmails.checked) return false;
-      if (d.type === 'phone' && !chkPhones.checked) return false;
-      if (d.type === 'card'  && !chkCards.checked)  return false;
-      if (d.type === 'name'  && !chkNames.checked)  return false;
-      return true;
-    });
+    const toRedact = stored.detections.filter((d) => sel.types.has(d.type));
     redactAll(currentCanvas, toRedact.map((d) => d.bbox));
     clearOverlay();
     setStatus(`Redacting ${stored.file.name}…`, true);
 
     // Build & verify the blob, but DON'T download yet — collect it and offer a
-    // single download from the finished popup once the whole bundle is done.
+    // single ZIP download from the finished popup once the whole bundle is done.
     const baseName = stored.file.name.replace(/\.[^.]+$/, '');
+    const metaRemoved = sel.meta ? stored.meta : 0;
     try {
-      const blob = await buildBatchBlob();
+      const blob = await buildBatchBlob(sel.meta);
       const result = await verifyClean(blob);
       if (!result.clean) batchAllClean = false;
       batchRedactedTotal += toRedact.length;
-      batchMetaTotal += metaItemsFound;
+      batchMetaTotal += metaRemoved;
       batchOutputs.push({ filename: `scrubbed-${baseName}.jpg`, blob });
+      batchBreakdown.push({ name: stored.file.name, summary: summariseRemoved(toRedact, metaRemoved) });
     } catch (err) {
       console.error('Batch file export failed:', err);
       batchAllClean = false;
+      batchBreakdown.push({ name: stored.file.name, summary: 'failed — not included' });
     }
     fileFinished();
     return;
   }
 });
+
+// Plain-language line of what was actually removed from one file, for the
+// finished-popup breakdown (e.g. "3 faces, 2 emails, 1 hidden removed").
+function summariseRemoved(dets: Detection[], meta: number): string {
+  const counts = new Map<string, number>();
+  for (const d of dets) counts.set(d.type, (counts.get(d.type) ?? 0) + 1);
+  const order: [DetectionType, string][] = [
+    ['face', 'face'], ['email', 'email'], ['phone', 'phone'],
+    ['card', 'card'], ['name', 'name'], ['manual', 'manual box'],
+  ];
+  const parts: string[] = [];
+  for (const [t, label] of order) {
+    const n = counts.get(t);
+    if (n) parts.push(`${n} ${label}${n !== 1 ? 's' : ''}`);
+  }
+  if (meta > 0) parts.push(`${meta} hidden`);
+  return parts.length ? parts.join(', ') + ' removed' : 'metadata stripped';
+}
 
 // ── PDF export progress + cancel ──────────────────────────────────────────────
 
@@ -506,9 +528,16 @@ window.addEventListener('pointerup', (e) => {
 
 const batchBackdrop = document.getElementById('batchBackdrop') as HTMLDivElement;
 
-// Collected sanitised outputs for the current bundle, plus running totals for
-// the finished popup. Reset each time the user starts a redact pass.
+// Per-file redaction choices from the review modal, keyed by the ScanResult so
+// they survive independently of file order. `types` = which visible categories
+// to burn; `meta` = whether to strip this file's hidden metadata.
+interface FileSelection { types: Set<DetectionType>; meta: boolean; }
+const batchSelections = new Map<ScanResult, FileSelection>();
+
+// Collected sanitised outputs for the current bundle, plus running totals and a
+// per-file breakdown for the finished popup. Reset each time a redact pass starts.
 let batchOutputs: { filename: string; blob: Blob }[] = [];
+let batchBreakdown: { name: string; summary: string }[] = [];
 let batchAllClean = true;
 let batchRedactedTotal = 0;
 let batchMetaTotal = 0;
@@ -516,6 +545,7 @@ let batchMetaTotal = 0;
 document.getElementById('btnBatchRedact')!.addEventListener('click', () => {
   batchBackdrop.hidden = true;
   batchOutputs = [];
+  batchBreakdown = [];
   batchAllClean = true;
   batchRedactedTotal = 0;
   batchMetaTotal = 0;
@@ -525,24 +555,53 @@ document.getElementById('btnBatchCancel')!.addEventListener('click', () => {
   batchBackdrop.hidden = true;
 });
 
-// Save every collected file at once (direct downloads — no per-file Save dialog).
-function downloadAllBatch() {
-  batchOutputs.forEach(({ filename, blob }, i) => {
-    setTimeout(() => {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
-    }, i * 150); // small stagger so browsers don't drop concurrent downloads
+function saveBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+// Bundle the collected files into one ZIP (store mode — the JPEGs are already
+// compressed) so the user gets a single download instead of many Save dialogs.
+function zipOutputs(files: { filename: string; blob: Blob }[]): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    Promise.all(files.map(async (f) => [f.filename, new Uint8Array(await f.blob.arrayBuffer())] as const))
+      .then((pairs) => {
+        const entries: Record<string, [Uint8Array, { level: 0 }]> = {};
+        for (const [name, data] of pairs) entries[name] = [data, { level: 0 }];
+        zip(entries, (err, data) => {
+          if (err) reject(err);
+          else resolve(new Blob([data], { type: 'application/zip' }));
+        });
+      })
+      .catch(reject);
   });
 }
 
+// Save the whole bundle as a single ZIP. Falls back to individual saves only if
+// zipping fails, so the user never leaves without their files.
+async function downloadAllBatch() {
+  if (batchOutputs.length === 0) return;
+  if (batchOutputs.length === 1) { saveBlob(batchOutputs[0].filename, batchOutputs[0].blob); return; }
+  try {
+    setStatus('Packaging your files into a ZIP…', true);
+    const zipBlob = await zipOutputs(batchOutputs);
+    saveBlob('scrubbed-bundle.zip', zipBlob);
+    setStatus(`Downloaded scrubbed-bundle.zip · ${batchOutputs.length} files`, false, true);
+  } catch (err) {
+    console.error('ZIP packaging failed:', err);
+    setStatus('Could not build the ZIP — saving files individually…', false);
+    batchOutputs.forEach(({ filename, blob }, i) => setTimeout(() => saveBlob(filename, blob), i * 150));
+  }
+}
+
 // All bundle files are redacted & verified — show the SAME finished popup as the
-// single-file flow (what was removed + support/GitHub links), download from there.
+// single-file flow, now with a per-file breakdown and a single ZIP download.
 function showBatchComplete() {
   const n = batchOutputs.length;
   setStatus(
@@ -550,48 +609,89 @@ function showBatchComplete() {
     false, true,
   );
   celebrate(
-    { redacted: batchRedactedTotal, metaItems: batchMetaTotal, verifiedClean: batchAllClean },
+    { redacted: batchRedactedTotal, metaItems: batchMetaTotal, verifiedClean: batchAllClean, perFile: batchBreakdown },
     () => downloadAllBatch(),
   );
+}
+
+// One toggle chip inside a file row. Pre-checked; keeps `onToggle` in sync and
+// reflects state via the `.on` class for styling.
+function makeChip(label: string, onToggle: (on: boolean) => void, meta = false): HTMLLabelElement {
+  const chip = document.createElement('label');
+  chip.className = 'batch-chip on' + (meta ? ' meta' : '');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = true;
+  const txt = document.createElement('span');
+  txt.textContent = label;
+  cb.addEventListener('change', () => {
+    chip.classList.toggle('on', cb.checked);
+    onToggle(cb.checked);
+  });
+  chip.appendChild(cb);
+  chip.appendChild(txt);
+  return chip;
 }
 
 function showBatchModal(results: ScanResult[]) {
   const summary = document.getElementById('batchModalSummary') as HTMLParagraphElement;
   const fileList = document.getElementById('batchFileList') as HTMLDivElement;
 
+  batchSelections.clear();
+
   const totalVisible = results.reduce((s, r) => s + r.faces + r.emails + r.phones + r.cards + r.names, 0);
   const totalMeta    = results.reduce((s, r) => s + r.meta, 0);
 
   summary.textContent = totalVisible > 0
-    ? `Found ${totalVisible} visible item${totalVisible !== 1 ? 's' : ''} across ${results.length} files. Review below, then redact all at once.`
+    ? `Found ${totalVisible} visible item${totalVisible !== 1 ? 's' : ''} across ${results.length} files. Tick exactly what to remove from each file below.`
     : `No visible faces or text found in ${results.length} files.${totalMeta > 0 ? ` Hidden metadata will be stripped.` : ''}`;
 
   while (fileList.firstChild) fileList.removeChild(fileList.firstChild);
+
   for (const r of results) {
+    // Everything found starts selected; the user unticks what they want to keep.
+    const sel: FileSelection = { types: new Set<DetectionType>(), meta: r.meta > 0 };
+    batchSelections.set(r, sel);
+
     const row = document.createElement('div');
     row.className = 'batch-file-row';
-
-    const parts: string[] = [];
-    if (r.faces)  parts.push(`${r.faces} face${r.faces  !== 1 ? 's' : ''}`);
-    if (r.emails) parts.push(`${r.emails} email${r.emails !== 1 ? 's' : ''}`);
-    if (r.phones) parts.push(`${r.phones} phone${r.phones !== 1 ? 's' : ''}`);
-    if (r.cards)  parts.push(`${r.cards} card${r.cards  !== 1 ? 's' : ''}`);
-    if (r.names)  parts.push(`${r.names} name${r.names  !== 1 ? 's' : ''}`);
-
-    const visibleStr = parts.length > 0 ? parts.join(', ') : 'nothing visible';
-    const metaStr    = r.meta > 0 ? ` · ${r.meta} hidden` : '';
 
     const name = document.createElement('span');
     name.className = 'batch-filename';
     name.textContent = r.file.name;
     name.title = r.file.name;
-
-    const found = document.createElement('span');
-    found.className = `batch-found${parts.length > 0 ? ' has-items' : ' clean'}`;
-    found.textContent = visibleStr + metaStr;
-
     row.appendChild(name);
-    row.appendChild(found);
+
+    const chips = document.createElement('div');
+    chips.className = 'batch-chips';
+
+    const typeDefs: { type: DetectionType; count: number; label: string }[] = [
+      { type: 'face',  count: r.faces,  label: 'face' },
+      { type: 'email', count: r.emails, label: 'email' },
+      { type: 'phone', count: r.phones, label: 'phone' },
+      { type: 'card',  count: r.cards,  label: 'card' },
+      { type: 'name',  count: r.names,  label: 'name' },
+    ];
+    for (const d of typeDefs) {
+      if (d.count <= 0) continue;
+      sel.types.add(d.type);
+      chips.appendChild(makeChip(`${d.count} ${d.label}${d.count !== 1 ? 's' : ''}`, (on) => {
+        if (on) sel.types.add(d.type); else sel.types.delete(d.type);
+      }));
+    }
+    if (r.meta > 0) {
+      chips.appendChild(makeChip(`${r.meta} hidden`, (on) => { sel.meta = on; }, true));
+    }
+
+    if (chips.childElementCount === 0) {
+      const none = document.createElement('span');
+      none.className = 'batch-none';
+      none.textContent = 'Nothing found — still re-encoded clean';
+      row.appendChild(none);
+    } else {
+      row.appendChild(chips);
+    }
+
     fileList.appendChild(row);
   }
 

@@ -1364,6 +1364,55 @@ canvas {
   font-family: "JetBrains Mono", monospace;
 }
 
+/* Bundle mode: per-file "what was removed" list above the download button. */
+.celeb-breakdown {
+  text-align: left;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 18px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.celeb-breakdown-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 0 0 8px;
+}
+
+.celeb-breakdown-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+
+.celeb-breakdown-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+}
+
+.celeb-breakdown-name {
+  color: var(--text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.celeb-breakdown-summary {
+  color: var(--accent);
+  font-weight: 600;
+  flex-shrink: 0;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11.5px;
+}
+
 .celeb-download { width: 100%; justify-content: center; padding: 12px; font-size: var(--fs-base); }
 
 .celeb-divider {
@@ -1570,9 +1619,9 @@ canvas {
 
 .batch-file-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
   padding: 10px 12px;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -1582,23 +1631,55 @@ canvas {
 .batch-filename {
   font-size: 13px;
   color: var(--text);
-  font-weight: 500;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
   min-width: 0;
 }
 
-.batch-found {
-  font-size: 12px;
-  font-weight: 600;
-  flex-shrink: 0;
-  text-align: right;
+.batch-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
-.batch-found.has-items { color: var(--accent); }
-.batch-found.clean { color: var(--text-muted); font-weight: 500; }
+/* Per-type toggle chip. `.on` = will be redacted; unchecked = kept. */
+.batch-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.batch-chip input { accent-color: var(--accent); margin: 0; cursor: pointer; }
+
+.batch-chip.on {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.batch-chip.meta.on {
+  background: color-mix(in srgb, var(--text-muted) 16%, transparent);
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+
+.batch-none {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
 
 .batch-modal-note {
   font-size: 12.5px;

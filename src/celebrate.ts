@@ -105,6 +105,40 @@ export interface CelebrateSummary {
   redacted: number;
   metaItems: number;
   verifiedClean: boolean;
+  // Bundle mode: one entry per file with a plain-language line of what was
+  // actually removed from it. When present, the popup renders a per-file list
+  // and switches its title / download button to the multi-file wording.
+  perFile?: { name: string; summary: string }[];
+}
+
+// Renders (or clears) the per-file "what was removed" list shown for bundles.
+function renderBreakdown(perFile?: { name: string; summary: string }[]) {
+  const el = $('celebBreakdown');
+  while (el.firstChild) el.removeChild(el.firstChild);
+  if (!perFile || perFile.length === 0) { el.hidden = true; return; }
+  el.hidden = false;
+
+  const title = document.createElement('p');
+  title.className = 'celeb-breakdown-title';
+  title.textContent = `Removed from each file (${perFile.length})`;
+  el.appendChild(title);
+
+  const list = document.createElement('ul');
+  list.className = 'celeb-breakdown-list';
+  for (const f of perFile) {
+    const li = document.createElement('li');
+    const nm = document.createElement('span');
+    nm.className = 'celeb-breakdown-name';
+    nm.textContent = f.name;
+    nm.title = f.name;
+    const sm = document.createElement('span');
+    sm.className = 'celeb-breakdown-summary';
+    sm.textContent = f.summary;
+    li.appendChild(nm);
+    li.appendChild(sm);
+    list.appendChild(li);
+  }
+  el.appendChild(list);
 }
 
 export function celebrate(summary: CelebrateSummary, onDownload: () => void) {
@@ -116,6 +150,17 @@ export function celebrate(summary: CelebrateSummary, onDownload: () => void) {
   if (summary.metaItems > 0) parts.push(`${summary.metaItems} hidden item${summary.metaItems !== 1 ? 's' : ''} removed`);
   parts.push(summary.verifiedClean ? 'metadata stripped & verified' : 'metadata stripped');
   $('celebSummary').textContent = parts.join(' · ') + '.';
+
+  // Multi-file bundle vs single file: adjust title + primary button wording.
+  const n = summary.perFile?.length ?? 0;
+  if (n > 1) {
+    $('celebTitle').textContent = `Your ${n} files are clean`;
+    $('celebDownload').textContent = `Download all ${n} files`;
+  } else {
+    $('celebTitle').textContent = 'Your file is clean';
+    $('celebDownload').textContent = 'Download clean copy';
+  }
+  renderBreakdown(summary.perFile);
 
   updateGratitude();
   loadStarCount();
