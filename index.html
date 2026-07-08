@@ -22,6 +22,10 @@
         </div>
         <h1 class="hero-title">Scrub</h1>
         <p class="hero-subtitle">Drop a photo or PDF. Detect faces &amp; private info. Download the clean version. <strong>Nothing is uploaded — ever.</strong></p>
+        <p class="hero-transparency">
+          🔒 Online or offline, your files never leave this device —
+          <strong>nothing is uploaded to any server</strong>. See it for yourself in your browser's DevTools → Network tab.
+        </p>
         <div class="risk-ticker-wrap" aria-hidden="true">
           <span class="risk-ticker-icon">⚠</span>
           <span class="risk-ticker" id="riskTicker"></span>
@@ -285,6 +289,14 @@
         <span class="footer-sep">·</span>
         <span class="footer-tagline">100% free · open source · nothing is uploaded</span>
       </div>
+      <p class="footer-transparency">
+        <strong>Full transparency:</strong> even on the hosted version at
+        <span class="footer-host">scrub.learner0422.workers.dev</span>, every photo and PDF is opened, scanned, and
+        scrubbed entirely inside your browser. Your files — and any faces, text, or metadata found in them — are
+        <strong>never uploaded, transmitted, logged, or stored anywhere</strong>: not on a server, not in a console,
+        not in this page. The only network request Scrub ever makes is an anonymous read of its own GitHub star count.
+        Don't take our word for it — open DevTools → Network and watch: your file never leaves your device.
+      </p>
     </footer>
 
     <!-- Batch scan review modal -->

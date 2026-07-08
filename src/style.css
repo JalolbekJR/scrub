@@ -69,6 +69,21 @@
   color: var(--text);
 }
 
+/* Honest, verifiable no-upload notice under the hero. */
+.hero-transparency {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  max-width: 560px;
+  line-height: 1.5;
+  margin-top: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.hero-transparency strong { color: var(--text); }
+
 /* ─── Main Content ─── */
 
 .main-content {
@@ -1549,6 +1564,24 @@ canvas {
 .footer-tagline {
   color: var(--text-muted);
   font-size: 11px;
+}
+
+/* Plain-language, honest statement of the no-upload guarantee. */
+.footer-transparency {
+  max-width: 860px;
+  margin: 14px auto 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.footer-transparency strong { color: var(--text); }
+
+.footer-host {
+  font-family: "JetBrains Mono", monospace;
+  color: var(--primary);
 }
 
 /* ─── Responsive ─── */
