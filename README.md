@@ -33,6 +33,28 @@ All ML models, OCR data, and fonts are **self-hosted** — there are no third-pa
 
 ---
 
+## What's detected 100% vs. best-effort
+
+Not all detection is equal, so here is the honest split.
+
+**Detected every time it's present — deterministic (byte-exact reads, not guesswork):**
+
+- **All standard EXIF / IPTC / XMP metadata** that `exifr` can parse — **GPS** coordinates, camera/phone **make, model and serial number**, **owner / author / artist** names, **timestamps** (capture, create, modify), **software / editing tags**, **ICC colour profiles**, and **embedded thumbnails** (the small copy of the original that survives a crop). If the field is in the file, it is found — and anything not individually itemised is still caught by a catch-all so nothing parseable is missed.
+- **Data appended after the file's real end** — trailing bytes / polyglot payloads bolted onto a JPEG, PNG, or after a PDF's `%%EOF`. Measured byte-for-byte.
+- **Known threat signatures**, matched as exact byte strings anywhere in the file: `ZIP` / `RAR` / `7-Zip` archives, `ELF` (Linux) executables, `<script>`, `javascript:`, `<?php`, `powershell`, `#!/bin/…` shell scripts, embedded HTML/iframes, and the PDF action tokens `/JavaScript`, `/OpenAction`, `/Launch`, `/EmbeddedFile`, `/RichMedia`, `/AcroForm`.
+- **AI prompt-injection** — a fixed list of known phrases ("ignore previous instructions", "you are now", "jailbreak", …), matched case-insensitively.
+
+**Best-effort — machine learning / OCR, _not_ guaranteed:**
+
+- **Faces** (BlazeFace). Tiling improves recall on crowded photos, but extreme angles, heavy occlusion, or very small faces can be missed.
+- **On-image text** — emails, phone numbers, card numbers, titled names — only found if OCR reads the pixels correctly. **English only**; low-resolution, stylised, rotated, or handwritten text may be missed. Plain untitled names aren't pattern-matched at all.
+
+For anything in the best-effort bucket, **draw a manual box** — that redaction is exact and always applied.
+
+**The real guarantee is on the _output_, not the detection.** Regardless of what was or wasn't flagged, the exported file is a fresh re-encode of the pixels only: **every** metadata segment and **every** appended byte is dropped — so even an *undetected* embedded archive, executable, or thumbnail is gone from what you download. Before the download unlocks, the output is re-scanned to confirm zero residual metadata and zero trailing data; that is what **"verified clean"** means. The one thing re-encoding can't remove is information still **visible in the pixels** — that's what the boxes are for.
+
+---
+
 ## Run locally
 
 Requires [Node.js](https://nodejs.org) (LTS).
