@@ -1,0 +1,13 @@
+# Cloudflare Worker (static assets) configuration.
+#
+# This project deploys as a Worker (its URL is scrub.learner0422.workers.dev and
+# the build token is Workers-scoped), so it is deployed with `wrangler deploy` —
+# NOT `wrangler pages deploy`. There is no Worker script: Wrangler deploys an
+# assets-only Worker that serves the Vite build output in ./dist. The name must
+# match the existing Worker so it updates in place (no new project / URL).
+name = "scrub"
+compatibility_date = "2026-07-09"
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
