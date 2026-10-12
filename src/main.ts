@@ -767,17 +767,6 @@ document.getElementById('btnBatchCancel')!.addEventListener('click', () => {
   closeBatchModal();
 });
 
-function saveBlob(filename: string, blob: Blob) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
-}
-
 // Bundle the collected files into one ZIP (store mode — the JPEGs are already
 // compressed) so the user gets a single download instead of many Save dialogs.
 function zipOutputs(files: { filename: string; blob: Blob }[]): Promise<Blob> {
@@ -800,21 +789,27 @@ function zipOutputs(files: { filename: string; blob: Blob }[]): Promise<Blob> {
 async function downloadAllBatch(epoch: number) {
   if (epoch !== batchEpoch || batchOutputs.length === 0) return;
   const files = [...batchOutputs];
-  if (files.length === 1) { saveBlob(files[0].filename, files[0].blob); batchDownloadedEpoch = epoch; return; }
+  if (files.length === 1) {
+    const delivered = await triggerDownload(files[0].filename, files[0].blob, () => epoch === batchEpoch);
+    if (delivered && epoch === batchEpoch) batchDownloadedEpoch = epoch;
+    return;
+  }
   try {
     setStatus('Packaging your files into a ZIP…', true);
     const zipBlob = await zipOutputs(files);
     if (epoch !== batchEpoch) return;
-    saveBlob('scrubbed-bundle.zip', zipBlob);
+    const delivered = await triggerDownload('scrubbed-bundle.zip', zipBlob, () => epoch === batchEpoch);
+    if (!delivered || epoch !== batchEpoch) return;
     batchDownloadedEpoch = epoch;
     setStatus(`Downloaded scrubbed-bundle.zip · ${batchOutputs.length} files`, false, true);
   } catch {
     if (epoch !== batchEpoch) return;
     console.error('ZIP packaging failed');
     setStatus('Could not build the ZIP — saving files individually…', false);
-    files.forEach(({ filename, blob }, i) => setTimeout(() => {
+    files.forEach(({ filename, blob }, i) => setTimeout(async () => {
       if (epoch !== batchEpoch) return;
-      saveBlob(filename, blob); if (i === files.length - 1) batchDownloadedEpoch = epoch;
+      const delivered = await triggerDownload(filename, blob, () => epoch === batchEpoch);
+      if (delivered && epoch === batchEpoch && i === files.length - 1) batchDownloadedEpoch = epoch;
     }, i * 150));
   }
 }

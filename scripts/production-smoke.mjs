@@ -1,7 +1,8 @@
 import http from 'node:http';
+import https from 'node:https';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, extname, sep } from 'node:path';
-import { chromium, expect } from '@playwright/test';
+import { chromium, firefox, webkit, expect } from '@playwright/test';
 import { jsPDF } from 'jspdf';
 import { unzipSync } from 'fflate';
 import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs';
@@ -13,7 +14,8 @@ for (const line of readFileSync('dist/_headers', 'utf8').split(/\r?\n/)) {
   else if (group && /^\s+[^:]+:/.test(line)) { const colon = line.indexOf(':'); group.headers[line.slice(0, colon).trim()] = line.slice(colon + 1).trim(); }
 }
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.wasm': 'application/wasm', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json' };
-const server = http.createServer((request, response) => {
+const tls = process.env.SCRUB_TEST_TLS_PFX ? { pfx: readFileSync(process.env.SCRUB_TEST_TLS_PFX), passphrase: process.env.SCRUB_TEST_TLS_PASSWORD } : null;
+const serve = (request, response) => {
   try {
     const path = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname);
     let file = resolve(root, '.' + (path === '/' ? '/index.html' : path));
@@ -23,22 +25,48 @@ const server = http.createServer((request, response) => {
     for (const rule of groups) if (rule.pattern === '/*' || path.startsWith(rule.pattern.replace(/\*$/, ''))) Object.assign(headers, rule.headers);
     response.writeHead(200, { ...headers, 'Content-Type': mime[extname(file)] ?? 'application/octet-stream' }); response.end(readFileSync(file));
   } catch { response.writeHead(404); response.end(); }
-});
+};
+const server = tls ? https.createServer(tls, serve) : http.createServer(serve);
 await new Promise(done => server.listen(0, '127.0.0.1', done));
-const origin = `http://127.0.0.1:${server.address().port}`;
-const browser = await chromium.launch(process.env.SCRUB_BROWSER_EXECUTABLE ? { executablePath: process.env.SCRUB_BROWSER_EXECUTABLE } : {});
+const origin = `${tls ? 'https' : 'http'}://127.0.0.1:${server.address().port}`;
+const engine = process.env.SCRUB_TEST_BROWSER ?? 'chromium';
+const browser = await ({ chromium, firefox, webkit }[engine]).launch(engine === 'chromium' && process.env.SCRUB_BROWSER_EXECUTABLE ? { executablePath: process.env.SCRUB_BROWSER_EXECUTABLE } : {});
 const results = [], requests = [], errors = [];
 try {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const page = await browser.newPage({ ignoreHTTPSErrors: Boolean(tls), viewport: { width: 1280, height: 900 } });
   page.setDefaultTimeout(90000);
+  const dialogs = [];
+  page.on('dialog', async dialog => {
+    dialogs.push(dialog.message());
+    expect(dialog.message()).toBe('Replace these files and discard their edits that have not been downloaded?');
+    await dialog.accept();
+  });
   page.on('request', request => requests.push({ url: request.url(), method: request.method(), body: request.postData() }));
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
-  await page.addInitScript(() => { window.showSaveFilePicker = async () => { throw new Error('Capture fallback download'); }; });
+  await page.addInitScript(() => {
+    window.loadedCount = 0; document.addEventListener('file:loaded', () => window.loadedCount++);
+    window.downloadAudit = { permissions: 0, downloads: [], revoked: [] };
+    window.showSaveFilePicker = async () => { window.downloadAudit.permissions++; throw new Error('File-write permission forbidden'); };
+    if (window.FileSystemFileHandle) window.FileSystemFileHandle.prototype.createWritable = async () => { window.downloadAudit.permissions++; throw new Error('Writable handle forbidden'); };
+    const create = URL.createObjectURL.bind(URL), revoke = URL.revokeObjectURL.bind(URL), blobs = new Map();
+    URL.createObjectURL = blob => { const url = create(blob); blobs.set(url, blob); return url; };
+    URL.revokeObjectURL = url => { window.downloadAudit.revoked.push(url); blobs.delete(url); revoke(url); };
+    document.addEventListener('change', event => { if (event.target.id === 'fileInput') window.uploadedFiles = Array.from(event.target.files); }, true);
+    document.addEventListener('click', event => {
+      if (event.target instanceof HTMLAnchorElement && event.target.download) {
+        const a = event.target;
+        window.downloadAudit.downloads.push({ url: a.href, name: a.download, type: blobs.get(a.href)?.type });
+      }
+    }, true);
+  });
+  await page.clock.install();
   const response = await page.goto(origin);
+  await page.bringToFront();
+  await expect(page.locator('#customize')).toHaveAttribute('aria-controls', 'editingTools');
   expect(response.headers()['content-security-policy']).toContain("connect-src 'self'");
   await expect(page.getByRole('heading', { name: 'Three steps. Nothing leaves your device.' })).toBeVisible();
-  await page.clock.install(); await page.clock.runFor(1800); await expect(page.locator('#riskTicker')).toContainText('Drop a photo or PDF'); await page.clock.resume();
+  await page.clock.runFor(1800); await expect(page.locator('#riskTicker')).toContainText('Drop a photo or PDF'); await page.clock.resume();
   const portrait = readFileSync('fixtures/astronaut.png').toString('base64');
   const images = await page.evaluate(async data => {
     const image = new Image(); image.src = `data:image/png;base64,${data}`; await image.decode();
@@ -51,11 +79,13 @@ try {
   bmp.write('BM'); bmp.writeUInt32LE(bmp.length, 2); bmp.writeUInt32LE(0, 6); bmp.writeUInt32LE(54, 10); bmp.writeUInt32LE(40, 14); bmp.writeInt32LE(width, 18); bmp.writeInt32LE(height, 22); bmp.writeUInt16LE(1, 26); bmp.writeUInt16LE(24, 28); bmp.writeUInt32LE(0, 30); bmp.writeUInt32LE(stride * height, 34); bmp.fill(0, 38, 54);
   images.push({ type: 'image/bmp', data: bmp.toString('base64'), width, height });
   async function upload(files) {
+    const before = await page.evaluate(() => window.loadedCount);
     await page.locator('#fileInput').setInputFiles(files);
-    await expect(page.locator('#btnRedact')).toBeEnabled();
+    await page.waitForFunction(before => window.loadedCount > before, before);
+    await expect(page.locator('#btnRedact')).toBeEnabled({ timeout: 90000 });
   }
   async function download() {
-    await page.locator('#btnRedact').click(); await expect(page.locator('#celebDownload')).toBeVisible();
+    await page.locator('#btnRedact').click(); await expect(page.locator('#celebDownload')).toBeVisible({ timeout: 90000 });
     for (const id of ['celebStar', 'celebShare', 'celebCopy', 'celebSupport', 'celebLater', 'celebEdit']) await expect(page.locator(`#${id}`)).toBeVisible();
     const pending = page.waitForEvent('download'); await page.locator('#celebDownload').click();
     const output = await pending; return { bytes: readFileSync(await output.path()), name: output.suggestedFilename() };
@@ -85,10 +115,24 @@ try {
   for (const image of images) {
     const started = performance.now(), extension = image.type.split('/')[1];
     await upload({ name: `public-fixture.${extension}`, mimeType: image.type, buffer: Buffer.from(image.data, 'base64') });
+    console.warn(engine + ': loaded ' + extension);
     let covered = false;
-    if (image.width >= 4) { await page.locator('#customize').click(); await page.locator('#btnDraw').click(); await page.locator('#addShape').click(); covered = true; }
+    if (image.width >= 4) { if (!await page.locator('#btnDraw').isVisible()) await page.locator('#customize').click(); await page.locator('#toolSelect').click(); await page.locator('#btnDraw').click(); await expect(page.locator('#btnDraw')).toHaveAttribute('aria-pressed', 'true'); await page.locator('#addShape').click(); covered = true; }
     const output = await download(); await jpeg(output, { ...image, covered });
+    // The input File remains byte-identical after rendering and downloading.
+    const original = await page.evaluate(async () => Array.from(new Uint8Array(await window.uploadedFiles[0].arrayBuffer())));
+    expect(Buffer.from(original)).toEqual(Buffer.from(image.data, 'base64'));
+    if (extension === 'jpeg') {
+      const repeat = page.waitForEvent('download'); await page.locator('#btnDownload').click();
+      const again = await repeat; expect(readFileSync(await again.path())).toEqual(output.bytes);
+      let unexpected = 0; const observe = () => unexpected++; page.on('download', observe);
+      await page.getByText('Category bulk controls', { exact: true }).click(); await page.locator('#chkEmails').uncheck();
+      await expect(page.locator('#btnDownload')).toBeDisabled();
+      await page.locator('#btnDownload').evaluate(button => button.click());
+      await page.waitForTimeout(100); expect(unexpected).toBe(0); page.off('download', observe);
+    }
     results.push({ input: extension, output: 'JPEG', bytes: output.bytes.length, totalMs: Math.round(performance.now() - started) });
+    console.warn(engine + ': checked ' + extension);
   }
   const makePdf = count => {
     const source = new jsPDF({ unit: 'pt', format: [200, 300] }); source.setProperties({ author: 'SYNTHETIC_PRIVATE_SENTINEL' }); source.addJS('app.alert("SYNTHETIC DEMO")');
@@ -106,9 +150,27 @@ try {
   const entries = unzipSync(bytes); expect(Object.keys(entries)).toHaveLength(2);
   for (const [name, bytes] of Object.entries(entries)) { if (name.endsWith('.pdf')) await pdf(bytes, 2); else await jpeg({ name, bytes: Buffer.from(bytes) }, { width: 512, height: 512 }); }
   results.push({ input: 'mixed batch', entries: Object.keys(entries), bytes: bytes.length });
+  // Retain the old prepared output failure guard in the actual built app.
+  await upload({ name: 'retry.png', mimeType: 'image/png', buffer: readFileSync('fixtures/astronaut.png') });
+  await page.evaluate(() => { HTMLCanvasElement.prototype.toBlob = () => { throw new Error('Synthetic export failure'); }; });
+  let failedDownloads = 0; page.on('download', () => failedDownloads++);
+  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeDisabled();
+  await expect(page.locator('#statusText')).toContainText(/failed|could not|error/i);
+  await page.locator('#btnDownload').evaluate(button => button.click());
+  await page.waitForTimeout(100); expect(failedDownloads).toBe(0);
+  // Advancing the clock verifies every download URL is eventually released.
+  await page.clock.runFor(61000);
+  const audit = await page.evaluate(() => window.downloadAudit);
+  expect(dialogs).toHaveLength(1);
+  expect(audit.permissions).toBe(0); expect(audit.downloads).toHaveLength(9);
+  for (const download of audit.downloads) {
+    expect(audit.revoked.filter(url => url === download.url)).toHaveLength(1);
+    expect(download.type).toBe(download.name.endsWith('.pdf') ? 'application/pdf' : download.name.endsWith('.zip') ? 'application/zip' : 'image/jpeg');
+  }
+  expect(await page.locator('a[download][href^="blob:"]').count()).toBe(0);
   await page.setViewportSize({ width: 320, height: 568 }); await page.locator('#themeToggle').click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   const sameOrigin = requests.every(request => (new URL(request.url).origin === origin || request.url.startsWith('blob:')) && request.method === 'GET' && !request.body);
   expect(sameOrigin).toBe(true); expect(errors).toEqual([]);
-  console.warn(JSON.stringify({ productionSmoke: results, requests: requests.length, onlyLocalAssetOrBlobReads: sameOrigin, pageOrConsoleErrors: errors }));
-} finally { await browser.close(); await new Promise(done => server.close(done)); }
+  console.warn(JSON.stringify({ engine, forbiddenPermissionCalls: audit.permissions, cleanedDownloadUrls: audit.downloads.length, productionSmoke: results, requests: requests.length, onlyLocalAssetOrBlobReads: sameOrigin, pageOrConsoleErrors: errors }));
+} catch (error) { console.warn(JSON.stringify({ engine, pageOrConsoleErrors: errors })); throw error; } finally { await browser.close(); await new Promise(done => server.close(done)); }

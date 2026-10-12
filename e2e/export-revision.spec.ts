@@ -21,27 +21,30 @@ test('category changes invalidate verified image bytes before and after export',
   await expect(page.locator('#statusText')).not.toContainText('verified');
 });
 
-test('a pending save dialog cannot write obsolete bytes after a newer revision is verified', async ({ page }) => {
+test('repeated ordinary downloads avoid file permissions and stale revisions stay blocked', async ({ page }) => {
   await page.addInitScript(() => {
-    const state = window as Window & { showSaveFilePicker: () => Promise<FileSystemFileHandle>; finishSave?: () => void; saveWrites: number };
-    state.saveWrites = 0;
-    state.showSaveFilePicker = () => new Promise(resolve => {
-      state.finishSave = () => resolve({ createWritable: async () => ({
-        write: async () => { state.saveWrites++; }, close: async () => {}, abort: async () => {},
-      }) } as unknown as FileSystemFileHandle);
-    });
+    const state = window as Window & { saveCalls: number; showSaveFilePicker: () => Promise<never> };
+    state.saveCalls = 0;
+    state.showSaveFilePicker = async () => { state.saveCalls++; throw new Error('Writable permission forbidden'); };
   });
   await page.goto('/');
-  await page.locator('#fileInput').setInputFiles({ name: 'black.jpg', mimeType: 'image/jpeg', buffer: readFileSync(new URL('../fixtures/black.jpg', import.meta.url)) });
-  await expect(page.locator('#controlsResult')).toBeVisible(); await expect(page.locator('#controlsResult')).not.toHaveClass(/scanning/, { timeout: 60000 });
+  const original = readFileSync(new URL('../fixtures/black.jpg', import.meta.url));
+  await page.locator('#fileInput').setInputFiles({ name: 'black.jpg', mimeType: 'image/jpeg', buffer: original });
+  await expect(page.locator('#btnRedact')).toBeEnabled({ timeout: 60000 });
   await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
-  await page.locator('#celebDownload').click();
+  const pending = page.waitForEvent('download'); await page.locator('#celebDownload').click();
+  const first = await pending;
+  const repeated = page.waitForEvent('download'); await page.locator('#btnDownload').click();
+  const second = await repeated;
+  expect(readFileSync(await first.path())).toEqual(readFileSync(await second.path()));
+  expect([...readFileSync(await second.path()).subarray(0, 3)]).toEqual([255, 216, 255]);
+  expect(await page.evaluate(() => (window as Window & { saveCalls: number }).saveCalls)).toBe(0);
+  expect(readFileSync(new URL('../fixtures/black.jpg', import.meta.url))).toEqual(original);
+  let downloads = 0; page.on('download', () => downloads++);
   await page.getByText('Category bulk controls', { exact: true }).click(); await page.locator('#chkEmails').uncheck();
-  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
-  await page.evaluate(() => (window as Window & { finishSave?: () => void }).finishSave?.());
-  // Allow the awaited picker and writable continuations to settle.
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => resolve(undefined))));
-  expect(await page.evaluate(() => (window as Window & { saveWrites: number }).saveWrites)).toBe(0);
+  await expect(page.locator('#btnDownload')).toBeDisabled();
+  await page.locator('#btnDownload').evaluate(button => (button as HTMLButtonElement).click());
+  expect(downloads).toBe(0);
 });
 
 test('mixed batch downloads a complete raster PDF and JPEG with matching signatures', async ({ page }) => {

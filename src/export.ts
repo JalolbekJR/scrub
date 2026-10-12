@@ -155,38 +155,24 @@ export async function buildExport(opts: BuildOptions = {}): Promise<BuiltExport>
   return { blob: await buildImageBlob(), filename: 'scrubbed.jpg', isPdf: false };
 }
 
+// Callers supply only verified output and bind validity to its document revision.
+// The browser owns the save location; Scrub never obtains a writable file handle.
 export async function triggerDownload(filename: string, blob: Blob, isCurrent: () => boolean = () => true) {
+  if (!isCurrent()) return false;
   const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
   try {
-    if ('showSaveFilePicker' in window) {
-      try {
-        const ext = filename.split('.').pop() ?? 'jpg';
-        const mimeMap: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', pdf: 'application/pdf' };
-        const handle = await (window as unknown as Window & { showSaveFilePicker: (o: unknown) => Promise<FileSystemFileHandle> }).showSaveFilePicker({
-          suggestedName: filename,
-          types: [{ description: 'Scrubbed file', accept: { [mimeMap[ext] ?? 'application/octet-stream']: [`.${ext}`] } }],
-        });
-        if (!isCurrent()) return false;
-        const writable = await handle.createWritable();
-        if (!isCurrent()) { await writable.abort(); return false; }
-        await writable.write(blob);
-        if (!isCurrent()) { await writable.abort(); return false; }
-        await writable.close();
-        return true;
-      } catch (err) {
-        if ((err as DOMException).name === 'AbortError') return false;
-      }
-    }
-    if (!isCurrent()) return false;
-    const a = document.createElement('a');
     a.href = url;
     a.download = filename;
     document.body.appendChild(a);
+    if (!isCurrent()) return false;
     a.click();
-    document.body.removeChild(a);
     return true;
   } finally {
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    if (a.parentNode) document.body.removeChild(a);
+    // Give Firefox, WebKit and large downloads time to consume the Blob URL.
+    // Each invocation owns its URL, including repeated or cancelled downloads.
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
 }
 
