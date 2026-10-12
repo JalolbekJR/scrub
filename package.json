@@ -1,7 +1,7 @@
 {
   "name": "scrub",
   "version": "1.0.0",
-  "description": "Remove faces, private text, and hidden metadata from images and PDFs — entirely in your browser.",
+  "description": "Remove faces, private text, and hidden metadata from images and PDFs \u0432\u0402\u201d entirely in your browser.",
   "author": "Jalolbek JR <learner0422@gmail.com> (https://github.com/JalolbekJR)",
   "license": "MIT",
   "homepage": "https://scrub.learner0422.workers.dev",
@@ -12,7 +12,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": "^22.13.0 || >=24.0.0"
   },
   "scripts": {
     "dev": "vite",
@@ -24,7 +24,8 @@
     "test:watch": "vitest",
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
-    "e2e:debug": "playwright test --debug"
+    "e2e:debug": "playwright test --debug",
+    "test:production": "node scripts/production-smoke.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
@@ -34,7 +35,7 @@
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.19.0",
     "vite": "^8.1.0",
-    "vitest": "^2.1.8"
+    "vitest": "4.1.11"
   },
   "dependencies": {
     "@fontsource/jetbrains-mono": "^5.2.8",

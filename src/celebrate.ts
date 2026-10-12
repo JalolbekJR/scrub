@@ -30,17 +30,6 @@ function updateGratitude() {
   }
 }
 
-async function loadStarCount() {
-  try {
-    const res = await fetch('https://api.github.com/repos/JalolbekJR/scrub', { headers: { Accept: 'application/vnd.github+json' } });
-    if (!res.ok) return;
-    const data = await res.json();
-    if (typeof data.stargazers_count === 'number') {
-      $('starCount').textContent = `· ${data.stargazers_count}`;
-    }
-  } catch { /* offline / repo not public yet — silently skip */ }
-}
-
 function close() {
   const backdrop = $('celebrateBackdrop');
   backdrop.hidden = true;
@@ -52,11 +41,11 @@ function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape') { close(); return; }
   if (e.key === 'Tab') {
     const modal = $('celebrateModal');
-    const f = [...modal.querySelectorAll<HTMLElement>('button, a[href]')].filter((x) => !x.hasAttribute('disabled'));
+    const f = [...modal.querySelectorAll<HTMLElement>('button, a[href]')].filter((x) => !x.hasAttribute('disabled') && x.getClientRects().length > 0);
     if (f.length === 0) return;
     const first = f[0], last = f[f.length - 1];
-    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    if (e.shiftKey && (document.activeElement === first || !modal.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && (document.activeElement === last || !modal.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
   }
 }
 
@@ -67,6 +56,11 @@ function wire() {
 
   $('celebClose').addEventListener('click', close);
   $('celebLater').addEventListener('click', close);
+  $('celebEdit').addEventListener('click', () => {
+    close();
+    if (document.body.classList.contains('is-preview')) $('previewToggle').click();
+    $('customize').focus();
+  });
   $('celebrateBackdrop').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) close();
   });
@@ -88,10 +82,10 @@ function wire() {
   });
 
   $('celebCopy').addEventListener('click', async (e) => {
-    try { await navigator.clipboard.writeText(REPO); } catch { /* ignore */ }
     const btn = e.currentTarget as HTMLElement;
     const prev = btn.textContent;
-    btn.textContent = '✓ Link copied';
+    try { await navigator.clipboard.writeText(REPO); btn.textContent = '✓ Link copied'; }
+    catch { btn.textContent = 'Could not copy — try again'; }
     setTimeout(() => { if (!btn.classList.contains('thanked')) btn.textContent = prev; }, 1800);
   });
 
@@ -105,6 +99,8 @@ export interface CelebrateSummary {
   redacted: number;
   metaItems: number;
   verifiedClean: boolean;
+  downloadableFiles?: number;
+  pdfPages?: number;
   // Bundle mode: one entry per file with a plain-language line of what was
   // actually removed from it. When present, the popup renders a per-file list
   // and switches its title / download button to the multi-file wording.
@@ -120,7 +116,7 @@ function renderBreakdown(perFile?: { name: string; summary: string }[]) {
 
   const title = document.createElement('p');
   title.className = 'celeb-breakdown-title';
-  title.textContent = `Removed from each file (${perFile.length})`;
+  title.textContent = `Processing results (${perFile.length})`;
   el.appendChild(title);
 
   const list = document.createElement('ul');
@@ -141,31 +137,31 @@ function renderBreakdown(perFile?: { name: string; summary: string }[]) {
   el.appendChild(list);
 }
 
-export function celebrate(summary: CelebrateSummary, onDownload: () => void) {
+export function celebrate(summary: CelebrateSummary, onDownload: () => void, returnFocus?: HTMLElement) {
   onDownloadCb = onDownload;
   wire();
 
   const parts: string[] = [];
-  if (summary.redacted > 0) parts.push(`${summary.redacted} visible item${summary.redacted !== 1 ? 's' : ''} redacted`);
+  if (summary.pdfPages) parts.push(`${summary.pdfPages}-page raster PDF rebuilt`);
+  else if (summary.redacted > 0) parts.push(`${summary.redacted} selected region${summary.redacted !== 1 ? 's' : ''} rendered`);
   if (summary.metaItems > 0) parts.push(`${summary.metaItems} hidden item${summary.metaItems !== 1 ? 's' : ''} removed`);
-  parts.push(summary.verifiedClean ? 'metadata stripped & verified' : 'metadata stripped');
+  parts.push(summary.verifiedClean ? 'export structure and metadata checks passed' : 'metadata stripped');
   $('celebSummary').textContent = parts.join(' · ') + '.';
 
   // Multi-file bundle vs single file: adjust title + primary button wording.
-  const n = summary.perFile?.length ?? 0;
-  if (n > 1) {
-    $('celebTitle').textContent = `Your ${n} files are clean`;
-    $('celebDownload').textContent = `Download all ${n} files`;
+  const n = summary.downloadableFiles ?? summary.perFile?.length ?? 0;
+  if (summary.perFile) {
+    $('celebTitle').textContent = `${n} verified file${n !== 1 ? 's' : ''} ready`;
+    $('celebDownload').textContent = `Download ${n} file${n !== 1 ? 's' : ''}`;
   } else {
-    $('celebTitle').textContent = 'Your file is clean';
-    $('celebDownload').textContent = 'Download clean copy';
+    $('celebTitle').textContent = 'Verified export ready';
+    $('celebDownload').textContent = 'Download verified copy';
   }
   renderBreakdown(summary.perFile);
 
   updateGratitude();
-  loadStarCount();
 
-  lastFocus = document.activeElement as HTMLElement;
+  lastFocus = returnFocus ?? document.activeElement as HTMLElement;
   $('celebrateBackdrop').hidden = false;
   document.addEventListener('keydown', onKey);
   ($('celebDownload') as HTMLButtonElement).focus();

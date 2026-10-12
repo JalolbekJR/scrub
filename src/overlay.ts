@@ -18,21 +18,28 @@ function removeChildren(el: HTMLElement) {
 
 // onDelete, when supplied, renders a small ✕ on each box so the user can drop
 // a detection (e.g. a false positive) before redacting.
-export function renderOverlay(detections: Detection[], onDelete?: (index: number) => void) {
+export function renderOverlay(detections: Detection[], onDelete?: (index: number) => void, onSelect?: (id: string) => void, selected?: string | null) {
   removeChildren(overlayWrap);
 
-  const scaleX = mainCanvas.offsetWidth / mainCanvas.width;
-  const scaleY = mainCanvas.offsetHeight / mainCanvas.height;
+  const scaleX = 100 / mainCanvas.width;
+  const scaleY = 100 / mainCanvas.height;
 
   detections.forEach((det, i) => {
     const { x, y, width, height } = det.bbox;
     const box = document.createElement('div');
     box.className = 'detection-box';
+    if (det.id) { box.dataset.regionId = det.id; box.onclick = () => onSelect?.(det.id!); }
+    if (det.id === selected) {
+      box.classList.add('selected');
+      const handle = document.createElement('span'); handle.className = 'resize-handle'; box.append(handle);
+    }
+    if (det.shape === 'ellipse') box.style.borderRadius = '50%';
+    if (det.included === false) box.classList.add('excluded');
     if (det.type === 'manual') box.classList.add('manual');
-    box.style.left   = `${x * scaleX}px`;
-    box.style.top    = `${y * scaleY}px`;
-    box.style.width  = `${width * scaleX}px`;
-    box.style.height = `${height * scaleY}px`;
+    box.style.left   = `${x * scaleX}%`;
+    box.style.top    = `${y * scaleY}%`;
+    box.style.width  = `${width * scaleX}%`;
+    box.style.height = `${height * scaleY}%`;
 
     const label = document.createElement('span');
     label.className = 'detection-box-label';
@@ -43,7 +50,7 @@ export function renderOverlay(detections: Detection[], onDelete?: (index: number
       const del = document.createElement('button');
       del.type = 'button';
       del.className = 'detection-box-del';
-      del.setAttribute('aria-label', 'Remove this box');
+      del.setAttribute('aria-label', `${det.type === 'manual' ? 'Delete manual mask' : 'Exclude ' + det.type + ' suggestion'} ${i + 1}`);
       del.textContent = '✕';
       del.addEventListener('click', (e) => { e.stopPropagation(); onDelete(i); });
       box.appendChild(del);

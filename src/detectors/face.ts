@@ -22,7 +22,7 @@ async function makeDetector(vision: Vision, delegate: 'GPU' | 'CPU'): Promise<De
   return FaceDetector.createFromOptions(vision, {
     baseOptions: { modelAssetPath: MODEL_PATH, delegate },
     runningMode: 'IMAGE',
-    minDetectionConfidence: 0.4,
+    minDetectionConfidence: 0.6,
   });
 }
 
@@ -32,7 +32,7 @@ async function init(): Promise<{ detector: Detector; backend: string } | null> {
     const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
     try {
       const detector = await makeDetector(vision, 'GPU');
-      return { detector, backend: 'WebGPU' };
+      return { detector, backend: 'GPU' };
     } catch {
       const freshVision = await FilesetResolver.forVisionTasks(WASM_BASE);
       const detector = await makeDetector(freshVision, 'CPU');
@@ -45,10 +45,10 @@ async function init(): Promise<{ detector: Detector; backend: string } | null> {
 }
 
 // BlazeFace resizes its whole input to ~128px, so faces that are small relative
-// to the frame disappear. We slice the image into overlapping tiles (~640px)
+// to the frame disappear. We slice the image into overlapping tiles (256px)
 // and detect inside each one, keeping every face large in its own tile.
-const TILE = 640;
-const OVERLAP = 128;
+const TILE = 256;
+const OVERLAP = 64;
 
 function detectInRegion(
   detector: Detector,
@@ -86,12 +86,14 @@ function dedupe(boxes: BoundingBox[]): BoundingBox[] {
   return kept;
 }
 
-export async function detectFaces(imageData: ImageData): Promise<BoundingBox[]> {
+export async function detectFaces(imageData: ImageData, signal?: AbortSignal): Promise<BoundingBox[]> {
   const t0 = performance.now();
   try {
     if (!ready) ready = init();
     const r = await ready;
+    if (signal?.aborted) throw new DOMException('Scan cancelled', 'AbortError');
     if (!r) {
+      ready = null; // A later explicit retry may initialize successfully.
       telFaceBackend.textContent = 'error';
       telFaceMs.textContent = '—';
       throw new Error('Face model unavailable');
@@ -111,22 +113,38 @@ export async function detectFaces(imageData: ImageData): Promise<BoundingBox[]> 
     // Tiled passes catch small faces that the full-frame resize would lose.
     if (W > TILE || H > TILE) {
       const step = TILE - OVERLAP;
-      for (let y = 0; y < H; y += step) {
-        for (let x = 0; x < W; x += step) {
+      let lastYield = performance.now();
+      for (let y = 0; ; y = Math.min(y + step, Math.max(0, H - TILE))) {
+        for (let x = 0; ; x = Math.min(x + step, Math.max(0, W - TILE))) {
           const sw = Math.min(TILE, W - x);
           const sh = Math.min(TILE, H - y);
-          if (sw < 64 || sh < 64) continue;
           all.push(...detectInRegion(r.detector, canvas, x, y, sw, sh));
+          // Keep controls and cancellation responsive without omitting any tile.
+          if (performance.now() - lastYield >= 16) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+            if (signal?.aborted) throw new DOMException('Scan cancelled', 'AbortError');
+            lastYield = performance.now();
+          }
+          if (x + TILE >= W) break;
         }
+        if (y + TILE >= H) break;
       }
     }
 
-    const faces = dedupe(all);
+    // Model boxes can exclude face edges under tilt/occlusion. Add a modest
+    // safety margin after deduplication, in the same canvas pixel coordinates.
+    // This is conservative coverage, not a claim of anatomical segmentation.
+    const faces = dedupe(all).map(box => {
+      const mx = box.width * .1, my = box.height * .1;
+      const x = Math.max(0, box.x - mx), y = Math.max(0, box.y - my);
+      return { x, y, width: Math.min(W, box.x + box.width + mx) - x, height: Math.min(H, box.y + box.height + my) - y };
+    });
     telFaceBackend.textContent = r.backend;
     telFaceMs.textContent = `${Math.round(performance.now() - t0)}ms`;
     return faces;
   } catch (err) {
-    console.error('Face detection failed:', err);
+    if (signal?.aborted) throw err;
+    console.error('Face detection failed');
     telFaceBackend.textContent = 'error';
     telFaceMs.textContent = '—';
     throw err;

@@ -1,99 +1,66 @@
 # Scrub
 
-Remove faces, private text, and hidden metadata from images and PDFs — in your browser, nothing uploaded.
+Scrub is a browser-local privacy editor for people preparing photos and PDFs to share. It suggests faces and supported private text, lets you choose what to cover, inspects supported hidden structures, and verifies reconstructed exports.
 
-[![MIT License](https://img.shields.io/badge/license-MIT-6667AB.svg)](./LICENSE)
+[Public website](https://scrub.learner0422.workers.dev) · [MIT license](LICENSE) · [Security policy](SECURITY.md)
 
-**Live version:** [scrub.learner0422.workers.dev](https://scrub.learner0422.workers.dev)
+The public website may run an older build. This repository does not establish which commit is deployed.
 
-> The live version runs the exact same code as this repo, entirely in your browser. Your files are never sent anywhere — not to a server, not to me, not anywhere. You can verify this by running it locally.
+## Three steps
 
----
+1. **Drop a file.** Choose a photo or PDF; processing stays in your browser.
+2. **Review what's found.** Include, exclude or restore suggestions. Use Customize to cover missed content and adjust masks.
+3. **Download clean.** Prepare a copy, review the preview and download after export checks pass.
 
-## What it does
+Advanced controls are optional. You can select individual regions, draw rectangles or ellipses, paint with a brush, erase brush coverage, change styles, undo/redo and return from preview to editing. PDF edits belong to their pages. Mixed batches produce a ZIP with distinct filenames.
 
-Photos carry more than what's visible. GPS coordinates, device model and serial, timestamps, sometimes a thumbnail of the original before you cropped it. Files can also carry hidden archives, scripts, or text designed to trick AI tools.
+## Files and exports
 
-Scrub finds it, shows you what was found (categories only — never the actual values), lets you choose what to remove, then exports a re-encoded file with the metadata stripped.
+Inputs: JPEG, PNG, WebP, GIF, BMP and PDF. All image inputs export as JPEG; transparency and animation are not preserved. PDFs export as raster-only PDFs with the accepted page count. Searchable text, forms, links, attachments, document structure and vector detail are not preserved. Generated PDFs can contain technical producer/date fields; these are not copied personal metadata. Large images can be downscaled; files over the processing limits are rejected rather than silently truncating pages.
 
-Detects:
-- Faces (MediaPipe BlazeFace, tiled detection for crowded images)
-- Emails, phone numbers, card numbers (Tesseract OCR, English)
-- Titled names like "Dr Brown" (plain names need a manual box)
-- Hidden metadata — GPS, device info, timestamps, color profiles, embedded thumbnails
-- Threat payloads — hidden ZIPs, scripts, executables, AI prompt-injection text
+Secure Solid, Secure Gradient and Soft Conceal replace selected pixels opaquely. Review the full mask and its edges: an unselected area remains visible. Soft Conceal uses generated colors and texture, not source-derived facial detail, but hair, clothing and context may still identify a person. **Blur and Mosaic are cosmetic effects that retain source information.** Use an opaque style for private text or reliable selected-pixel replacement.
 
-No detector is perfect, so you can **draw your own redaction boxes** over anything the scan misses, and remove any box you don't want.
+## Inspection and privacy
 
-Before the download is offered, the exported file is **verified**: images are re-parsed for residual metadata and trailing bytes; PDFs are scanned for scripts, embedded files, leftover document metadata, and appended data. The "verified clean" badge reflects that real check.
+Face detection uses MediaPipe; English OCR uses Tesseract with four quarter-turn passes. Recognition can miss faces or text, and automatic name matching is limited. Always review manually.
 
-All ML models, OCR data, and fonts are **self-hosted** — there are no third-party CDN requests, and the Content-Security-Policy locks `connect-src` to your own origin (the only optional external call is the public GitHub star count).
+The Security & Privacy Findings section checks supported metadata, image containers, appended data, PDF actions/attachments, suspicious links and possible AI-directed instructions. Findings distinguish parsed structures from heuristic indicators and incomplete checks. Unusual text or a URL is not proof of malware. Scrub never executes attachments or visits extracted links.
 
-> **Status: beta.** It does what it says and verifies its own output, but treat it as a strong privacy aid, not a certified sanitizer. See [SECURITY.md](./SECURITY.md) for the threat model and honest limitations (English-only OCR, detector recall).
+Export reconstruction removes supported embedded structures independently of whether inspection detected them. Verification checks exported structure and metadata; it does not certify complete visual redaction, malware absence, universal metadata coverage or anonymity. Required processing or verification failure blocks a verified download. Editing invalidates older verification and output.
 
----
+Files and extracted content stay in browser memory. There are no file uploads, telemetry, accounts or remote OCR/reputation services. Models, English OCR data and fonts load from the app's own origin. Optional support/share links open external sites only when chosen. The host receives ordinary asset requests; external sites have their own privacy policies. Offline use requires assets to be available; there is no guaranteed offline installation.
 
-## What's detected 100% vs. best-effort
+## Development
 
-Not all detection is equal, so here is the honest split.
+Use Node.js 24 LTS (Node 22.13 or later in the 22.x line is also permitted).
 
-**Detected every time it's present — deterministic (byte-exact reads, not guesswork):**
-
-- **All standard EXIF / IPTC / XMP metadata** that `exifr` can parse — **GPS** coordinates, camera/phone **make, model and serial number**, **owner / author / artist** names, **timestamps** (capture, create, modify), **software / editing tags**, **ICC colour profiles**, and **embedded thumbnails** (the small copy of the original that survives a crop). If the field is in the file, it is found — and anything not individually itemised is still caught by a catch-all so nothing parseable is missed.
-- **Data appended after the file's real end** — trailing bytes / polyglot payloads bolted onto a JPEG, PNG, or after a PDF's `%%EOF`. Measured byte-for-byte.
-- **Known threat signatures**, matched as exact byte strings anywhere in the file: `ZIP` / `RAR` / `7-Zip` archives, `ELF` (Linux) executables, `<script>`, `javascript:`, `<?php`, `powershell`, `#!/bin/…` shell scripts, embedded HTML/iframes, and the PDF action tokens `/JavaScript`, `/OpenAction`, `/Launch`, `/EmbeddedFile`, `/RichMedia`, `/AcroForm`.
-- **AI prompt-injection** — a fixed list of known phrases ("ignore previous instructions", "you are now", "jailbreak", …), matched case-insensitively.
-
-**Best-effort — machine learning / OCR, _not_ guaranteed:**
-
-- **Faces** (BlazeFace). Tiling improves recall on crowded photos, but extreme angles, heavy occlusion, or very small faces can be missed.
-- **On-image text** — emails, phone numbers, card numbers, titled names — only found if OCR reads the pixels correctly. **English only**; low-resolution, stylised, rotated, or handwritten text may be missed. Plain untitled names aren't pattern-matched at all.
-
-For anything in the best-effort bucket, **draw a manual box** — that redaction is exact and always applied.
-
-**The real guarantee is on the _output_, not the detection.** Regardless of what was or wasn't flagged, the exported file is a fresh re-encode of the pixels only: **every** metadata segment and **every** appended byte is dropped — so even an *undetected* embedded archive, executable, or thumbnail is gone from what you download. Before the download unlocks, the output is re-scanned to confirm zero residual metadata and zero trailing data; that is what **"verified clean"** means. The one thing re-encoding can't remove is information still **visible in the pixels** — that's what the boxes are for.
-
----
-
-## Run locally
-
-Requires [Node.js](https://nodejs.org) (LTS).
-
-```bash
-git clone https://github.com/JalolbekJR/scrub.git
-cd scrub
-npm install
+```sh
+npm ci --ignore-scripts
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open the URL Vite prints. Dependencies are locked; do not use a forced audit upgrade.
 
-```bash
-npm run typecheck   # TypeScript type checking (tsc --noEmit)
-npm run lint        # ESLint
-npm test            # unit tests (Vitest)
-npm run e2e         # browser end-to-end tests (Playwright)
-npm run build       # production build → ./dist
+```sh
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npx playwright install chromium firefox webkit
+npm run e2e -- --workers=1
+npm run test:production
 ```
 
----
+On Linux, Playwright may need `install --with-deps`. `SCRUB_PORT` selects the browser-test server port. `SCRUB_BROWSER_EXECUTABLE` optionally selects installed Chrome for the Chromium project and production smoke checks. Run engines sequentially on memory-constrained machines. See [testing](docs/TESTING.md).
 
-## Stack
+The stack is TypeScript/Vite, PDF.js/jsPDF, MediaPipe, Tesseract, exifr and fflate. Browser code has no application server. `npm run build` produces static `dist/` assets; source maps are disabled. [Third-party notices](THIRD_PARTY_NOTICES.md) cover redistributed assets and licenses.
 
-- Vite + TypeScript, no framework
-- `@mediapipe/tasks-vision` — face detection
-- `tesseract.js` — OCR
-- `exifr` — metadata parsing
-- `pdfjs-dist` + `jspdf` — PDF read/write
+## Browser support and limits
 
----
+Automated regression coverage targets desktop Chromium, Firefox and WebKit, including narrow viewports and keyboard controls. Desktop WebKit emulation is not real iPhone testing. Native save dialogs, screen readers, actual mobile devices and low-memory behavior require manual verification. Complex documents, tiny faces, handwriting, mixed orientations and non-English text can fail recognition. Resource caps reduce risk but do not prove a universal memory bound for native decoders or GPU allocation.
 
-## Support
+## Reports, attribution and support
 
-[Support on Boosty](https://boosty.to/unusual_one/donate)
+Report reproducible bugs through [GitHub issues](https://github.com/JalolbekJR/scrub/issues), using synthetic files rather than private documents. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
----
-
-## License
-
-MIT © 2026 [Jalolbek JR](https://github.com/JalolbekJR)
+Designed and engineered by [Jalolbek JR](https://github.com/JalolbekJR). Scrub is MIT licensed. [Boosty support](https://boosty.to/unusual_one/donate), starring and sharing are optional and never required to download.

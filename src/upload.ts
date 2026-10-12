@@ -1,4 +1,4 @@
-import type { PDFDocumentProxy } from 'pdfjs-dist';
+import type { PDFDocumentProxy, PDFDocumentLoadingTask } from 'pdfjs-dist';
 import { LIMITS, validateFile, safeScale, nextGeneration, currentGeneration, effectiveMaxPdfPages } from './validate';
 
 const dropZone = document.getElementById('dropZone') as HTMLDivElement;
@@ -16,6 +16,12 @@ const nextPageBtn = document.getElementById('nextPage') as HTMLButtonElement;
 const telemetry = document.getElementById('telemetry') as HTMLDivElement;
 
 let busy = false;
+let pendingFile: File | null = null;
+let pdfTask: PDFDocumentLoadingTask | null = null;
+async function releasePdf() {
+  const task = pdfTask; pdfTask = null;
+  if (task) await task.destroy();
+}
 
 function setStatus(msg: string, spinning = false, done = false) {
   statusBar.hidden = false;
@@ -104,11 +110,20 @@ async function loadPdf(file: File, gen: number) {
   const arrayBuffer = await file.arrayBuffer();
   if (gen !== currentGeneration()) return;
   const pdfParams = { data: arrayBuffer, isEvalSupported: false, disableAutoFetch: true, disableStream: true };
-  const doc = await getDocument(pdfParams as unknown as Parameters<typeof getDocument>[0]).promise;
+  const task = getDocument(pdfParams as unknown as Parameters<typeof getDocument>[0]);
+  pdfTask = task;
+  let timer: ReturnType<typeof setTimeout>;
+  let doc: PDFDocumentProxy;
+  try {
+    doc = await Promise.race([task.promise, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { void task.destroy(); reject(new Error('PDF loading timed out. Try an unencrypted, smaller PDF.')); }, 15000);
+    })]);
+  } finally { clearTimeout(timer!); }
+  if (gen !== currentGeneration()) { await task.destroy(); return; }
 
   const maxPages = effectiveMaxPdfPages();
   if (doc.numPages > maxPages) {
-    setError(`PDF has ${doc.numPages} pages — only the first ${maxPages} can be processed.`);
+    throw new Error(`PDF has ${doc.numPages} pages, above the ${maxPages}-page processing limit. Split it before exporting.`);
   }
 
   canvasArea.hidden = false;
@@ -118,52 +133,78 @@ async function loadPdf(file: File, gen: number) {
   pdfNav.hidden = usablePages <= 1;
 
   let currentPage = 1;
+  let rendering = false;
   await renderPdfPage(doc, currentPage, gen);
   setStatus(`PDF loaded — ${usablePages} page(s)`, false, true);
 
   prevPageBtn.onclick = async () => {
-    if (currentPage > 1) {
-      currentPage--;
-      setStatus(`Rendering page ${currentPage}…`, true);
-      try { await renderPdfPage(doc, currentPage, gen); } catch { setError('Could not render that page.'); }
+    if (rendering || currentPage <= 1 || gen !== currentGeneration()) return;
+    rendering = true;
+    const target = currentPage - 1;
+    document.dispatchEvent(new CustomEvent('page:started', { detail: { gen } }));
+    setStatus(`Rendering page ${target}…`, true);
+    try {
+      await renderPdfPage(doc, target, gen);
+      if (gen !== currentGeneration()) return;
+      currentPage = target;
       setStatus(`Page ${currentPage} of ${usablePages}`, false, true);
+    } catch {
+      if (gen === currentGeneration()) setError('Could not render that page.');
+    } finally {
+      rendering = false;
     }
   };
   nextPageBtn.onclick = async () => {
-    if (currentPage < usablePages) {
-      currentPage++;
-      setStatus(`Rendering page ${currentPage}…`, true);
-      try { await renderPdfPage(doc, currentPage, gen); } catch { setError('Could not render that page.'); }
+    if (rendering || currentPage >= usablePages || gen !== currentGeneration()) return;
+    rendering = true;
+    const target = currentPage + 1;
+    document.dispatchEvent(new CustomEvent('page:started', { detail: { gen } }));
+    setStatus(`Rendering page ${target}…`, true);
+    try {
+      await renderPdfPage(doc, target, gen);
+      if (gen !== currentGeneration()) return;
+      currentPage = target;
       setStatus(`Page ${currentPage} of ${usablePages}`, false, true);
+    } catch {
+      if (gen === currentGeneration()) setError('Could not render that page.');
+    } finally {
+      rendering = false;
     }
   };
 }
 
 export async function handleFile(file: File) {
-  if (busy) return;
+  if (busy) { pendingFile = file; return; }
+  busy = true;
 
   // Allocate the generation up front so a validation failure can still emit a
   // `file:failed` the batch queue will act on — otherwise one bad file in a
   // bundle would leave the queue waiting forever.
   const gen = nextGeneration();
-  const v = await validateFile(file);
-  if (!v.ok) {
-    setError(v.reason ?? 'Unsupported file.');
-    document.dispatchEvent(new CustomEvent('file:failed', { detail: { gen, file, reason: v.reason } }));
-    return;
-  }
-
-  busy = true;
+  document.dispatchEvent(new CustomEvent('file:started', { detail: { gen } }));
   try {
+    // Release PDF.js workers, fonts and cached page resources on replacement,
+    // including a rejected replacement. Old navigation cannot render it.
+    await releasePdf();
+    const v = await validateFile(file);
+    if (!v.ok) {
+      setError(v.reason ?? 'Unsupported file.');
+      document.dispatchEvent(new CustomEvent('file:failed', { detail: { gen, file, reason: v.reason } }));
+      return;
+    }
+
     document.dispatchEvent(new CustomEvent('file:raw', { detail: { file, gen } }));
     if (v.kind === 'pdf') await loadPdf(file, gen);
     else await loadImage(file, gen);
   } catch (err) {
+    await releasePdf();
     console.error('file processing failed');
     setError(err instanceof Error ? err.message : 'Could not process this file.');
     document.dispatchEvent(new CustomEvent('file:failed', { detail: { gen, file } }));
   } finally {
     busy = false;
+    const next = pendingFile; pendingFile = null;
+    if (next) void handleFile(next);
   }
 }
 

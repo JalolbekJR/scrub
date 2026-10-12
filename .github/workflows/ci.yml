@@ -10,22 +10,42 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      # Actions pinned to a full commit SHA for supply-chain safety; Dependabot
-      # keeps the SHA + the version comment up to date.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
-      # No committed lockfile (see .gitignore) so Cloudflare's GitHub build stays
-      # green; install matches that environment.
-      - run: npm install
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
       - run: npm run build
-      # NOTE: e2e (Playwright) is a local-only suite — it drives real face/text
-      # detection against private fixtures in public/test/, which are gitignored
-      # and never pushed. Run it locally with `npm run e2e`.
+      - run: node scripts/check-release.mjs
+      - run: git diff --check
+
+  browsers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - run: npm run e2e -- --project=${{ matrix.browser }} --workers=1 --reporter=line
+      - if: matrix.browser == 'chromium'
+        run: npm run build && npm run test:production

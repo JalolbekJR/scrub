@@ -1,6 +1,6 @@
 import { detectFaces } from './detectors/face';
 import { detectPii } from './detectors/pii';
-import { redactAll } from './redactor';
+import { renderRegions } from './mask-renderer';
 import { exportBlockedBy } from './failclosed';
 import type { Detection, DetectionType, DetectorHealth } from './types';
 
@@ -28,11 +28,9 @@ export function selectedTypes(): Record<DetectionType, boolean> {
 // `face` is required only when faces are selected. `ocr` is required when any
 // text category (email / phone / card / name) is selected, since those all come
 // from OCR. A detector that isn't needed is marked 'disabled' and never run.
-export async function detectAll(imageData: ImageData): Promise<{ detections: Detection[]; health: DetectorHealth }> {
+export async function detectAll(imageData: ImageData, sel = selectedTypes()): Promise<{ detections: Detection[]; health: DetectorHealth }> {
   const dets: Detection[] = [];
   const health: DetectorHealth = { face: 'disabled', ocr: 'disabled' };
-  const sel = selectedTypes();
-
   const needFace = sel.face;
   const needOcr = sel.email || sel.phone || sel.card || sel.name;
 
@@ -64,16 +62,15 @@ export async function detectAll(imageData: ImageData): Promise<{ detections: Det
 // Detect, then burn the selected categories into the canvas in place.
 // Fails closed: if a required detector failed, throw instead of silently
 // exporting a page whose cleanliness can't be vouched for.
-export async function autoRedactCanvas(canvas: HTMLCanvasElement): Promise<number> {
+export async function autoRedactCanvas(canvas: HTMLCanvasElement, sel = selectedTypes()): Promise<number> {
   const ctx = canvas.getContext('2d')!;
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const { detections, health } = await detectAll(imageData);
+  const { detections, health } = await detectAll(imageData, sel);
 
   const blockedReason = exportBlockedBy(health);
   if (blockedReason) throw new Error(blockedReason);
 
-  const sel = selectedTypes();
-  const boxes = detections.filter((d) => sel[d.type]).map((d) => d.bbox);
-  redactAll(canvas, boxes);
-  return boxes.length;
+  const included = detections.filter((d) => sel[d.type]);
+  renderRegions(canvas, included);
+  return included.length;
 }

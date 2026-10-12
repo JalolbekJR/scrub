@@ -1,4 +1,6 @@
+import { openEditing } from './editor-controls';
 import { test, expect } from '@playwright/test';
+import { piiImage } from './fixtures';
 
 test.describe('Image redaction workflow', () => {
   test('page loads and displays title', async ({ page }) => {
@@ -10,36 +12,38 @@ test.describe('Image redaction workflow', () => {
   test('uploads image and detects content', async ({ page }) => {
     await page.goto('/');
     const fileInput = page.locator('#fileInput');
-    await fileInput.setInputFiles('public/test/face.jpg');
+    await fileInput.setInputFiles(await piiImage(page));
 
     // Wait for detection to complete (telemetry shows results, not "Scanning...")
     await page.waitForFunction(
       () => {
         const result = document.getElementById('controlsResult')?.textContent;
-        return result && !result.includes('Scanning');
+        return result && !document.getElementById('controlsResult')?.classList.contains('scanning');
       },
-      { timeout: 40000 }
+      undefined, { timeout: 60000 }
     );
 
     // Verify detection happened and shows a count
     const controlsResult = await page.locator('#controlsResult').textContent();
     expect(controlsResult).toBeTruthy();
-    expect(controlsResult).toMatch(/\d+\s*(faces?|words?|detections?)/i);
+    await expect(page.getByRole('button', { name: 'Email 1, page 1', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Phone 1, page 1', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Card 1, page 1', exact: true })).toBeVisible();
   });
 
   test('draw button is visible and toggles', async ({ page }) => {
     await page.goto('/');
     const fileInput = page.locator('#fileInput');
-    await fileInput.setInputFiles('public/test/face.jpg');
+    await fileInput.setInputFiles(await piiImage(page));
 
     // Wait for UI to be ready (detection telemetry shows)
     await page.waitForFunction(
-      () => document.getElementById('telemetry')?.textContent &&
-             document.getElementById('telemetry')!.textContent!.length > 10,
-      { timeout: 30000 }
+      () => !(document.getElementById('btnRedact') as HTMLButtonElement).disabled,
+      undefined, { timeout: 60000 }
     );
 
     // Verify draw button exists
+    await openEditing(page);
     const drawBtn = page.locator('#btnDraw');
     await expect(drawBtn).toBeVisible();
 
@@ -57,11 +61,11 @@ test.describe('Image redaction workflow', () => {
   test('redact and download', async ({ page }) => {
     await page.goto('/');
     const fileInput = page.locator('#fileInput');
-    await fileInput.setInputFiles('public/test/face.jpg');
+    await fileInput.setInputFiles(await piiImage(page));
 
     await page.waitForFunction(
       () => document.getElementById('telFaceBackend')?.textContent !== '—',
-      { timeout: 15000 }
+      undefined, { timeout: 60000 }
     );
 
     // Redact
@@ -71,7 +75,7 @@ test.describe('Image redaction workflow', () => {
     // Wait for verification to complete
     await page.waitForFunction(
       () => document.getElementById('statusText')?.textContent?.includes('verified'),
-      { timeout: 15000 }
+      undefined, { timeout: 60000 }
     );
 
     const status = await page.locator('#statusText').textContent();
