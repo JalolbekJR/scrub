@@ -1,6 +1,6 @@
 import type { Detection } from '../types';
 import { matchPii, type WordResult } from './pii-match';
-import type { QuarterTurn } from './ocr-orientation';
+import { ocrRasterScale, type QuarterTurn } from './ocr-orientation';
 
 const telOcrMs = document.getElementById('telOcrMs') as HTMLSpanElement;
 
@@ -65,18 +65,20 @@ function performOcr(imageData: ImageData, onProgress?: OcrProgress): Promise<{ w
     }, OCR_TIMEOUT);
 
     cancelActive = () => finish([], 0, true);
-    w.onmessage = async (e: MessageEvent<{ type?: string; status?: string; progress?: number; words?: WordResult[]; ms?: number; error?: string; turn?: QuarterTurn }>) => {
+    w.onmessage = async (e: MessageEvent<{ type?: string; status?: string; progress?: number; words?: WordResult[]; ms?: number; error?: string; turn?: QuarterTurn; scale?: number }>) => {
       if (e.data.type === 'raster-needed') {
         const turn = e.data.turn;
-        if (settled || turn === undefined || ![0, 1, 2, 3].includes(turn)) { finish([], 0, true); return; }
+        const scale = e.data.scale ?? 1;
+        if (settled || turn === undefined || ![0, 1, 2, 3].includes(turn) || scale !== ocrRasterScale(imageData.width, imageData.height)) { finish([], 0, true); return; }
         const rotated = document.createElement('canvas');
         try {
           if (!fallbackSource) {
             fallbackSource = document.createElement('canvas'); fallbackSource.width = imageData.width; fallbackSource.height = imageData.height;
             fallbackSource.getContext('2d')!.putImageData(imageData, 0, 0);
           }
-          const { width, height } = imageData; rotated.width = turn % 2 ? height : width; rotated.height = turn % 2 ? width : height;
+          const { width, height } = imageData; rotated.width = (turn % 2 ? height : width) * scale; rotated.height = (turn % 2 ? width : height) * scale;
           const rc = rotated.getContext('2d')!;
+          rc.scale(scale, scale);
           if (turn === 1) rc.translate(height, 0);
           if (turn === 2) rc.translate(width, height);
           if (turn === 3) rc.translate(0, width);

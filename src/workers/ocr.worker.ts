@@ -1,5 +1,5 @@
 import { createWorker } from 'tesseract.js';
-import { recognitionScore, sourceWord, type QuarterTurn } from '../detectors/ocr-orientation';
+import { ocrRasterScale, recognitionScore, sourceWord, type QuarterTurn } from '../detectors/ocr-orientation';
 
 interface WordResult {
   text: string;
@@ -43,6 +43,7 @@ self.onmessage = async (e: MessageEvent<{ imageData: ImageData; width: number; h
   const t0 = performance.now();
   try {
     const { imageData, width, height } = e.data;
+    const scale = ocrRasterScale(width, height);
 
     const offscreen = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(width, height) : null;
     const ctx = offscreen?.getContext('2d');
@@ -55,8 +56,9 @@ self.onmessage = async (e: MessageEvent<{ imageData: ImageData; width: number; h
     for (const turn of [0, 1, 2, 3] as QuarterTurn[]) {
       let blob: Blob;
       if (offscreen && ctx) {
-        const rotated = new OffscreenCanvas(turn % 2 ? height : width, turn % 2 ? width : height);
+        const rotated = new OffscreenCanvas((turn % 2 ? height : width) * scale, (turn % 2 ? width : height) * scale);
         const rc = rotated.getContext('2d')!;
+        rc.scale(scale, scale);
         if (turn === 1) rc.translate(height, 0);
         if (turn === 2) rc.translate(width, height);
         if (turn === 3) rc.translate(0, width);
@@ -67,7 +69,7 @@ self.onmessage = async (e: MessageEvent<{ imageData: ImageData; width: number; h
         // Older WebKit worker environments lack OffscreenCanvas. Request one
         // local main-thread raster at a time; recognition still stays here.
         blob = await new Promise<Blob>(resolve => {
-          pendingRaster = { turn, resolve }; self.postMessage({ type: 'raster-needed', turn });
+          pendingRaster = { turn, resolve }; self.postMessage({ type: 'raster-needed', turn, scale });
         });
       }
       const { data } = await worker.recognize(blob, {}, { blocks: true, text: true });
@@ -80,7 +82,7 @@ self.onmessage = async (e: MessageEvent<{ imageData: ImageData; width: number; h
             for (const w of (line.words ?? [])) {
               if (w && w.text && w.bbox) {
                 confidenceWords.push(w);
-                candidate.push({ ...sourceWord({ text: w.text, bbox: w.bbox }, turn, width, height), line: lineId, order: candidate.length });
+                candidate.push({ ...sourceWord({ text: w.text, bbox: w.bbox }, turn, width, height, scale), line: lineId, order: candidate.length });
               }
             }
             lineId++;

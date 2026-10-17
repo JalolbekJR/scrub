@@ -33,3 +33,12 @@ fixture set and inspect actual encoded pixels. Set `SCRUB_BROWSER_EXECUTABLE`
 to an installed Chrome path if Playwright Chromium is unavailable. The accuracy
 test attaches JSON measurements to its report. This small set does not establish
 accuracy across different people, scripts, lighting, handwriting, or layouts.
+
+`ocr-small-text.png` is a deterministic synthetic 500 × 180 raster containing the
+same six invented OCR lines. It was drawn at 1000 × 360 with 28px DejaVu Sans
+Mono (black on white), then reduced by half with Canvas interpolation. DejaVu's
+additions are public domain; the base typeface is licensed under the Bitstream
+Vera license. This asset contains rendered text only, not redistributed font
+software. The original pixels reproduce the small `@` glyph being read as `g`.
+The four sensitive fields remain mandatory at every quarter turn, with actual
+downloaded JPEG ink coverage checked independently from OCR bounding boxes.

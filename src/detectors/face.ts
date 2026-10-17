@@ -20,6 +20,9 @@ let ready: Promise<{ detector: Detector; backend: string } | null> | null = null
 async function makeDetector(vision: Vision, delegate: 'GPU' | 'CPU'): Promise<Detector> {
   const { FaceDetector } = await import('@mediapipe/tasks-vision');
   return FaceDetector.createFromOptions(vision, {
+    // Detection already runs on the main thread. Use its DOM WebGL canvas;
+    // OffscreenCanvas existing does not imply working Offscreen WebGL.
+    canvas: document.createElement('canvas'),
     baseOptions: { modelAssetPath: MODEL_PATH, delegate },
     runningMode: 'IMAGE',
     minDetectionConfidence: 0.6,

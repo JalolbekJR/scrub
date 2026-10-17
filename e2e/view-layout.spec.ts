@@ -75,3 +75,19 @@ test('responsive fitting and home reset do not create ResizeObserver delivery lo
  await page.locator('#newFile').click();await expect(page.locator('#onboarding')).toBeVisible();
  expect(errors).toEqual([]);
 });
+
+
+test('a pending fit width cannot overflow a 320px review, while zoom remains scrollable', async ({ page }) => {
+ await page.setViewportSize({width:320,height:640});await page.goto('/');
+ await page.locator('#fileInput').setInputFiles({name:'portrait.png',mimeType:'image/png',buffer:readFileSync(new URL('../fixtures/astronaut.png',import.meta.url))});
+ await expect(page.locator('#btnRedact')).toBeEnabled({timeout:90000});
+ const bounds=await page.locator('#mainContainer').evaluate(el=>{
+  // A 390px view has a 358px fit until the queued resize handler runs.
+  el.style.width='358px'; const c=document.getElementById('mainCanvas') as HTMLCanvasElement;
+  return {overflow:document.documentElement.scrollWidth-document.documentElement.clientWidth,width:c.getBoundingClientRect().width,source:[c.width,c.height]};
+ });
+ expect(bounds.overflow).toBe(0);expect(bounds.width).toBeLessThanOrEqual(288);expect(bounds.source).toEqual([512,512]);
+ await openEditing(page);await page.locator('#viewZoom').fill('2');
+ await expect.poll(()=>page.locator('#singleCanvasWrap').evaluate(el=>el.scrollWidth>el.clientWidth)).toBe(true);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth-document.documentElement.clientWidth)).toBe(0);
+});

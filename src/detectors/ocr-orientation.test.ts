@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { recognitionScore, sourceWord, type QuarterTurn } from './ocr-orientation';
+import { recognitionScore, sourceWord, ocrRasterScale, type QuarterTurn } from './ocr-orientation';
 import { matchPii } from './pii-match';
 
 it.each([0, 1, 2, 3] as QuarterTurn[])('remaps quarter-turn %i word edges to the original non-square raster', turn => {
@@ -22,4 +22,14 @@ it('does not join actual separate lines or guess ambiguous OCR digits', () => {
   expect(matchPii([word('alice @', 0), word('example.com', 1)])).toEqual([]);
   expect(matchPii([word('4I11 1111 1111 1111', 0)]).some(d => d.type === 'card')).toBe(false);
   expect(matchPii([word('+998 (90) 123-45-67', 0)]).map(d => d.type)).toEqual(['phone']);
+});
+
+
+it('upscales bounded small text rasters without increasing ordinary photo or PDF rasters', () => {
+ expect(ocrRasterScale(500,180)).toBe(2);expect(ocrRasterScale(180,500)).toBe(2);
+ for(const [w,h] of [[512,512],[400,300],[1000,360],[2000,3000],[2,2],[640,257],[641,180]]) expect(ocrRasterScale(w,h)).toBe(1);
+});
+it.each([0,1,2,3] as QuarterTurn[])('maps 2x OCR edges back to source pixels at quarter-turn %i', turn=>{
+ const boxes=[{x0:20,y0:40,x1:140,y1:80},{x0:80,y0:20,x1:120,y1:140},{x0:260,y0:80,x1:380,y1:120},{x0:40,y0:260,x1:80,y1:380}];
+ expect(sourceWord({text:'small',bbox:boxes[turn]},turn,200,80,2).bbox).toEqual({x0:10,y0:20,x1:70,y1:40});
 });

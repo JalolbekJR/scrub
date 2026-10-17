@@ -53,11 +53,22 @@ test('original landing guide stays static with exactly three familiar steps', as
   await expect(page.locator('.step-title')).toHaveText(['Drop a file', "Review what's found", 'Download clean']);
   await expect(page.locator('.risk-ticker-wrap')).toHaveAttribute('aria-hidden', 'true');
   await expect(page.getByText('Designed & Engineered by Jalolbek JR', { exact: true })).toBeVisible();
+  await page.locator('.step').first().hover();
   for (const width of [1280, 768, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
-    const rows = await page.locator('.step').evaluateAll(els => els.map(el => el.getBoundingClientRect().top));
-    expect(width > 600 ? new Set(rows).size === 1 : rows[0] < rows[1] && rows[1] < rows[2]).toBe(true);
+    if (width > 600) {
+      await page.locator('.step').first().hover();
+      await expect(page.locator('.step').first()).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, -2)');
+    }
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
+    // The original hover lift changes visual bounds, not the grid row. Wait for
+    // the requested breakpoint and compare untransformed layout coordinates.
+    await expect.poll(() => page.locator('.step').evaluateAll((els, wide) => {
+      const rows = els.map(el => (el as HTMLElement).offsetTop);
+      const columns = els.map(el => (el as HTMLElement).offsetLeft);
+      return wide ? new Set(rows).size === 1 && columns[0] < columns[1] && columns[1] < columns[2]
+        : rows[0] < rows[1] && rows[1] < rows[2];
+    }, width > 600)).toBe(true);
   }
 });
 

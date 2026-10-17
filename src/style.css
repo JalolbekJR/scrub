@@ -1891,6 +1891,8 @@ body.document-loaded .canvas-area { grid-template-columns:minmax(0,1fr); }
 #mainContainer { display:block; max-width:none; margin-inline:auto; }
 #mainCanvas { display:block; width:100%; height:auto; }
 .single-canvas-wrap { display:block; overflow:visible; min-width:0; }
+/* Fit updates run asynchronously; the previous width must still fit immediately. */
+.single-canvas-wrap:not(.view-zoomed) #mainContainer { max-width:100%; }
 .single-canvas-wrap.view-zoomed { overflow:auto; max-height:80dvh; overscroll-behavior:contain; }
 .view-zoomed #mainContainer { margin-left:0; }
 .single-canvas-wrap.panning, .panning .detection-box { cursor:grab; touch-action:none; }
