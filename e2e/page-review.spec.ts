@@ -23,7 +23,7 @@ test('pending manual PDF selections survive navigation and export from another p
   await page.locator('#prevPage').click(); await expect(page.locator('#pageInfo')).toHaveText('Page 1 of 2'); await wait();
   await expect(page.locator('.detection-box.manual')).toHaveCount(1);
   await page.locator('#nextPage').click(); await expect(page.locator('#pageInfo')).toHaveText('Page 2 of 2'); await wait();
-  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
+  await page.locator('#btnRedact').click(); await expect(page.locator('#celebrateBackdrop')).toBeVisible({ timeout: 60000 });
   const pending = page.waitForEvent('download'); await page.locator('#celebDownload').click();
   const output = await pending; const bytes = readFileSync(await output.path());
   const uncovered = await page.evaluate(async data => {
@@ -55,12 +55,11 @@ test('applied PDF masks remain removable after navigation without contaminating 
   await page.mouse.move(r.x + r.width * .2, r.y + r.height * .2); await page.mouse.down();
   await page.mouse.move(r.x + r.width * .6, r.y + r.height * .6); await page.mouse.up();
   await expect(page.locator('.detection-box.manual')).toHaveCount(1);
-  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
-  await page.locator('#celebClose').click();
+  await page.locator('#previewToggle').click(); await expect(page.locator('#scrubberWrap')).toBeVisible();
   await page.locator('#nextPage').click(); await expect(page.locator('#pageInfo')).toHaveText('Page 2 of 2'); await wait();
   await page.locator('#prevPage').click(); await expect(page.locator('#pageInfo')).toHaveText('Page 1 of 2'); await wait();
   await page.locator('.detection-box.manual .detection-box-del').click();
-  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
+  await page.locator('#previewToggle').click(); await expect(page.locator('#scrubberWrap')).toBeVisible();
   const pixels = await page.evaluate(() => ['originalCanvas', 'redactedCanvas'].map(id => {
     const c = document.getElementById(id) as HTMLCanvasElement;
     return [...c.getContext('2d')!.getImageData(c.width * .4, c.height * .4, 1, 1).data];

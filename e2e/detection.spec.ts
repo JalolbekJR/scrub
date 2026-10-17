@@ -1,4 +1,4 @@
-import { openEditing } from './editor-controls';
+import { openRegions, openEditing } from './editor-controls';
 import { test, expect } from '@playwright/test';
 import { piiImage } from './fixtures';
 
@@ -26,6 +26,7 @@ test.describe('Image redaction workflow', () => {
     // Verify detection happened and shows a count
     const controlsResult = await page.locator('#controlsResult').textContent();
     expect(controlsResult).toBeTruthy();
+    await openRegions(page);
     await expect(page.getByRole('button', { name: 'Email 1, page 1', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Phone 1, page 1', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Card 1, page 1', exact: true })).toBeVisible();
@@ -74,15 +75,15 @@ test.describe('Image redaction workflow', () => {
 
     // Wait for verification to complete
     await page.waitForFunction(
-      () => document.getElementById('statusText')?.textContent?.includes('verified'),
+      () => !document.getElementById('celebrateBackdrop')?.hidden,
       undefined, { timeout: 60000 }
     );
 
-    const status = await page.locator('#statusText').textContent();
-    expect(status).toContain('verified');
+    const status = await page.locator('#celebSummary').textContent();
+    expect(status).toContain('checks passed');
 
     // Download button should be enabled
-    const downloadBtn = page.locator('#btnDownload');
+    const downloadBtn = page.locator('#celebDownload');
     await expect(downloadBtn).toBeEnabled();
   });
 

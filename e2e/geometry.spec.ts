@@ -22,7 +22,7 @@ async function draw(page: Page, start: number[], end: number[]) {
 }
 async function download(page: Page) {
   await page.locator('#btnRedact').click();
-  await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
+  await expect(page.locator('#celebrateBackdrop')).toBeVisible({ timeout: 60000 });
   const pending = page.waitForEvent('download'); await page.locator('#celebDownload').click();
   const result = await pending;
   return { name: result.suggestedFilename(), bytes: readFileSync(await result.path()) };
@@ -80,10 +80,10 @@ test('rotated PDF pages retain manual masks across navigation and in raster outp
     if (data.pageNumber === 2) (pdf.internal as unknown as { write(s: string): void }).write('/Rotate 90');
   });
   await page.locator('#fileInput').setInputFiles({ name: 'rotated.pdf', mimeType: 'application/pdf', buffer: Buffer.from(pdf.output('arraybuffer')) });
-  await waitScan(page); await draw(page, [.2, .2], [.6, .6]); await download(page);
+  await waitScan(page); await draw(page, [.2, .2], [.6, .6]); await page.locator('#previewToggle').click();
   await page.locator('#nextPage').click();
   await expect(page.locator('#pageInfo')).toHaveText('Page 2 of 2'); await waitScan(page);
-  await draw(page, [.8, .8], [1, 1]); await download(page);
+  await draw(page, [.8, .8], [1, 1]); await page.locator('#previewToggle').click();
   await page.locator('#prevPage').click();
   await expect(page.locator('#pageInfo')).toHaveText('Page 1 of 2'); await waitScan(page);
   const retained = await page.locator('#mainCanvas').evaluate((c: HTMLCanvasElement) => [...c.getContext('2d')!.getImageData(Math.round(c.width * .3), Math.round(c.height * .3), 1, 1).data]);

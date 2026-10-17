@@ -1,12 +1,13 @@
-// Success modal — appears after the first successful scrub. It IS the download
-// step (primary action), with gentle, non-nagging support / star / share CTAs.
+// Completion follows verified download initiation over the restored homepage.
+// Browser save completion is not observable; support and retries are optional.
 
 const REPO = 'https://github.com/JalolbekJR/scrub';
 const SUPPORT = 'https://boosty.to/unusual_one/donate';
 const SHARE_TEXT = 'I just scrubbed faces, private info & hidden metadata from a file — 100% in my browser, nothing uploaded. Check out Scrub:';
 
 let lastFocus: HTMLElement | null = null;
-let onDownloadCb: (() => void) | null = null;
+let onDownloadCb: (() => void | Promise<void>) | null = null;
+let onDismiss: (() => void) | undefined;
 
 function $(id: string) { return document.getElementById(id)!; }
 
@@ -30,15 +31,16 @@ function updateGratitude() {
   }
 }
 
-function close() {
+export function closeCelebration() {
   const backdrop = $('celebrateBackdrop');
   backdrop.hidden = true;
   document.removeEventListener('keydown', onKey);
-  lastFocus?.focus();
+  onDownloadCb = null; onDismiss?.(); onDismiss = undefined;
+  const focus = lastFocus; lastFocus = null; focus?.focus();
 }
 
 function onKey(e: KeyboardEvent) {
-  if (e.key === 'Escape') { close(); return; }
+  if (e.key === 'Escape') { closeCelebration(); return; }
   if (e.key === 'Tab') {
     const modal = $('celebrateModal');
     const f = [...modal.querySelectorAll<HTMLElement>('button, a[href]')].filter((x) => !x.hasAttribute('disabled') && x.getClientRects().length > 0);
@@ -54,20 +56,18 @@ function wire() {
   if (wired) return;
   wired = true;
 
-  $('celebClose').addEventListener('click', close);
-  $('celebLater').addEventListener('click', close);
+  $('celebClose').addEventListener('click', closeCelebration);
+  $('celebLater').addEventListener('click', closeCelebration);
   $('celebEdit').addEventListener('click', () => {
-    close();
-    if (document.body.classList.contains('is-preview')) $('previewToggle').click();
-    $('customize').focus();
+    closeCelebration();
+    $('dropZone').focus();
   });
   $('celebrateBackdrop').addEventListener('click', (e) => {
-    if (e.target === e.currentTarget) close();
+    if (e.target === e.currentTarget) closeCelebration();
   });
 
   $('celebDownload').addEventListener('click', () => {
-    onDownloadCb?.();
-    close();
+    void onDownloadCb?.();
   });
 
   $('celebStar').addEventListener('click', (e) => {
@@ -137,7 +137,8 @@ function renderBreakdown(perFile?: { name: string; summary: string }[]) {
   el.appendChild(list);
 }
 
-export function celebrate(summary: CelebrateSummary, onDownload: () => void, returnFocus?: HTMLElement) {
+export function celebrate(summary: CelebrateSummary, onDownload: () => void | Promise<void>, returnFocus?: HTMLElement, dismiss?: () => void) {
+  onDismiss = dismiss;
   onDownloadCb = onDownload;
   wire();
 
@@ -146,17 +147,15 @@ export function celebrate(summary: CelebrateSummary, onDownload: () => void, ret
   else if (summary.redacted > 0) parts.push(`${summary.redacted} selected region${summary.redacted !== 1 ? 's' : ''} rendered`);
   if (summary.metaItems > 0) parts.push(`${summary.metaItems} hidden item${summary.metaItems !== 1 ? 's' : ''} removed`);
   parts.push(summary.verifiedClean ? 'export structure and metadata checks passed' : 'metadata stripped');
-  $('celebSummary').textContent = parts.join(' · ') + '.';
+  const omitted = Math.max(0, (summary.perFile?.length ?? 0) - (summary.downloadableFiles ?? 0));
+  $('celebSummary').textContent = 'Export checks passed. Your browser is handling the download. Retry is available for five minutes.' + (omitted ? ` ${omitted} file(s) failed and were not included.` : '');
+  $('celebTechnical').textContent = parts.join(' · ') + '.';
+  ($('celebrateModal').querySelector('details') as HTMLDetailsElement).open = false;
 
   // Multi-file bundle vs single file: adjust title + primary button wording.
-  const n = summary.downloadableFiles ?? summary.perFile?.length ?? 0;
-  if (summary.perFile) {
-    $('celebTitle').textContent = `${n} verified file${n !== 1 ? 's' : ''} ready`;
-    $('celebDownload').textContent = `Download ${n} file${n !== 1 ? 's' : ''}`;
-  } else {
-    $('celebTitle').textContent = 'Verified export ready';
-    $('celebDownload').textContent = 'Download verified copy';
-  }
+  const retry = $('celebDownload') as HTMLButtonElement; retry.disabled = false;
+  $('celebTitle').textContent = 'Download started';
+  $('celebDownload').textContent = 'Download again';
   renderBreakdown(summary.perFile);
 
   updateGratitude();
@@ -164,5 +163,5 @@ export function celebrate(summary: CelebrateSummary, onDownload: () => void, ret
   lastFocus = returnFocus ?? document.activeElement as HTMLElement;
   $('celebrateBackdrop').hidden = false;
   document.addEventListener('keydown', onKey);
-  ($('celebDownload') as HTMLButtonElement).focus();
+  ($('celebEdit') as HTMLButtonElement).focus();
 }

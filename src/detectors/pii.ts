@@ -8,6 +8,13 @@ const OCR_TIMEOUT = 60000;
 
 let worker: Worker | null = null;
 let queue: Promise<unknown> = Promise.resolve();
+let generation = 0;
+let cancelActive: (() => void) | undefined;
+export function cancelPii(releaseIdleWorker = false) {
+  generation++; cancelActive?.(); cancelActive = undefined;
+  if (releaseIdleWorker) { worker?.terminate(); worker = null; }
+  queue = Promise.resolve();
+}
 
 function getWorker(): Worker {
   if (!worker) {
@@ -22,7 +29,8 @@ export type OcrProgress = (status: string, progress: number) => void;
 // from a successful run that simply found no text. Callers that must fail closed
 // (e.g. auto-redacting an unopened PDF page) rely on this flag.
 function runOcr(imageData: ImageData, onProgress?: OcrProgress): Promise<{ words: WordResult[]; ms: number; failed: boolean }> {
-  const request = queue.then(() => performOcr(imageData, onProgress));
+  const epoch = generation;
+  const request = queue.then(() => epoch === generation ? performOcr(imageData, onProgress) : { words: [], ms: 0, failed: true });
   queue = request.catch(() => undefined);
   return request;
 }
@@ -42,6 +50,7 @@ function performOcr(imageData: ImageData, onProgress?: OcrProgress): Promise<{ w
     const finish = (words: WordResult[], ms: number, failed = false) => {
       if (settled) return;
       settled = true;
+      cancelActive = undefined;
       clearTimeout(timer);
       w.onmessage = null;
       w.onerror = null;
@@ -55,6 +64,7 @@ function performOcr(imageData: ImageData, onProgress?: OcrProgress): Promise<{ w
       finish([], 0, true);
     }, OCR_TIMEOUT);
 
+    cancelActive = () => finish([], 0, true);
     w.onmessage = async (e: MessageEvent<{ type?: string; status?: string; progress?: number; words?: WordResult[]; ms?: number; error?: string; turn?: QuarterTurn }>) => {
       if (e.data.type === 'raster-needed') {
         const turn = e.data.turn;

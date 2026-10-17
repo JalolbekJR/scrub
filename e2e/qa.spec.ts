@@ -37,7 +37,7 @@ test('clipboard failure is explained and the download dialog restores keyboard f
     expect(await page.evaluate(() => document.getElementById('celebrateModal')!.contains(document.activeElement))).toBe(true);
   }
   await page.keyboard.press('Escape');
-  await expect(page.locator('#btnRedact')).toBeFocused();
+  await expect(page.locator('#dropZone')).toBeFocused();
 });
 
 test('a manual mask can be created and adjusted entirely with the keyboard', async ({ page }) => {
@@ -96,7 +96,7 @@ test('replacing a PDF releases its loading task, including rejected replacement 
   await expect(page.locator('#btnRedact')).toBeEnabled({ timeout: 60000 });
   await page.locator('#fileInput').setInputFiles({ name: 'bad.txt', mimeType: 'text/plain', buffer: Buffer.from('not supported') });
   await expect.poll(() => page.evaluate(() => (window as Window & { oldPdfTask?: import('pdfjs-dist').PDFDocumentLoadingTask }).oldPdfTask?.destroyed)).toBe(true);
-  await expect(page.locator('#btnDownload')).toBeDisabled();
+  await expect(page.locator('#btnRedact')).not.toHaveAttribute('data-export-state', 'verified');
   await page.locator('#fileInput').setInputFiles({ name: 'black.jpg', mimeType: 'image/jpeg', buffer: black });
   await expect(page.locator('#btnRedact')).toBeEnabled({ timeout: 60000 });
 });

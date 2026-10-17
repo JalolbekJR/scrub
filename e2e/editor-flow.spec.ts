@@ -1,3 +1,4 @@
+import { openRegions } from './editor-controls';
 import { openEditing, openGeometry } from './editor-controls';
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
@@ -16,8 +17,11 @@ test('preview loops remain responsive and keyboard operable without discarding e
   await page.locator('#fileInput').setInputFiles({ name: 'portrait.png', mimeType: 'image/png', buffer: readFileSync(new URL('../fixtures/astronaut.png', import.meta.url)) });
   await expect(page.locator('#controlsResult')).toBeVisible();
   await expect(page.locator('#controlsResult')).not.toHaveClass(/scanning/, { timeout: 60000 });
+  await openRegions(page);
   await page.getByRole('button', { name: 'Face 1, page 1', exact: true }).click();
+  await openRegions(page);
   await page.locator('#regionStyle').selectOption('soft');
+  await openEditing(page);
   await page.locator('#previewToggle').click();
   const slider = page.getByRole('slider', { name: 'Before/after comparison slider' });
   await slider.focus(); await slider.press('ArrowRight'); await expect(slider).toHaveAttribute('aria-valuenow', '55');
@@ -33,7 +37,7 @@ test('preview loops remain responsive and keyboard operable without discarding e
   await page.locator('#showRegions').click();
   await expect(page.locator('#regionStyle')).toHaveValue('soft');
   await page.getByRole('button', { name: 'Close region settings' }).click();
-  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
+  await page.locator('#btnRedact').click(); await expect(page.locator('#celebrateBackdrop')).toBeVisible({ timeout: 60000 });
   const pending = page.waitForEvent('download'); await page.locator('#celebDownload').click();
   const output = await pending; expect(readFileSync(await output.path()).subarray(0, 3)).toEqual(Buffer.from([255, 216, 255]));
 });
@@ -63,6 +67,7 @@ test('batch traps focus, supports dismissal and preserves page-specific masks an
   await page.mouse.move(r.x + r.width * .2, r.y + r.height * .2); await page.mouse.down();
   await page.mouse.move(r.x + r.width * .6, r.y + r.height * .6); await page.mouse.up();
   await expect(page.locator('.detection-box.manual')).toHaveCount(1);
+  await openRegions(page);
   await page.locator('#regionColor').fill('#112233'); await page.locator('#regionColor').dispatchEvent('change');
   await page.locator('#returnBatch').click(); await expect(page.locator('#batchBackdrop')).toBeVisible();
   await page.locator('#btnBatchRedact').click(); await expect(page.locator('#celebrateBackdrop')).toBeVisible({ timeout: 90000 });
@@ -86,12 +91,12 @@ test('failed detector can recover through explicit Retry scan without a page rel
   await page.route('**/vendor/mediapipe/blaze_face_short_range.tflite', route => route.abort());
   await page.locator('#fileInput').setInputFiles({ name: 'black.jpg', mimeType: 'image/jpeg', buffer: black });
   await expect(page.locator('#controlsResult')).toContainText('face detection failed', { timeout: 60000 });
-  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeDisabled();
+  await page.locator('#btnRedact').click(); await expect(page.locator('#btnRedact')).not.toHaveAttribute('data-export-state', 'verified');
   await page.unroute('**/vendor/mediapipe/blaze_face_short_range.tflite'); await page.locator('#retryScan').click();
   await expect(page.locator('#controlsResult')).toHaveClass(/scanning/, { timeout: 60000 });
   await expect(page.locator('#controlsResult')).not.toHaveClass(/scanning/, { timeout: 60000 });
   await expect(page.locator('#controlsResult')).not.toContainText('failed');
-  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
+  await page.locator('#btnRedact').click(); await expect(page.locator('#celebrateBackdrop')).toBeVisible({ timeout: 60000 });
 });
 
 test('cancelled multipage export blocks download and supports a successful retry', async ({ page }) => {
@@ -102,8 +107,8 @@ test('cancelled multipage export blocks download and supports a successful retry
   await expect(page.locator('#controlsResult')).toBeVisible(); await expect(page.locator('#controlsResult')).not.toHaveClass(/scanning/, { timeout: 60000 });
   await page.locator('#btnRedact').click(); await page.locator('#btnCancelExport').click();
   await expect(page.locator('#statusText')).toContainText('cancelled', { timeout: 60000 });
-  await expect(page.locator('#btnDownload')).toBeDisabled(); await expect(page.locator('#celebrateBackdrop')).toBeHidden();
-  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 90000 });
+  await expect(page.locator('#btnRedact')).not.toHaveAttribute('data-export-state', 'verified'); await expect(page.locator('#celebrateBackdrop')).toBeHidden();
+  await page.locator('#btnRedact').click(); await expect(page.locator('#celebrateBackdrop')).toBeVisible({ timeout: 90000 });
 });
 
 test('PDF navigation disables stale page controls until the next raster and scan are ready', async ({ page }) => {
@@ -143,11 +148,12 @@ test('editing during PDF preparation cancels obsolete progress and cannot publis
   for (let p = 1; p <= 8; p++) { if (p > 1) pdf.addPage(); pdf.setFillColor(237, 60, 90); pdf.rect(0, 0, 300, 400, 'F'); }
   await page.locator('#fileInput').setInputFiles({ name: 'revision.pdf', mimeType: 'application/pdf', buffer: Buffer.from(pdf.output('arraybuffer')) });
   await expect(page.locator('#controlsResult')).toBeVisible(); await expect(page.locator('#btnRedact')).toBeEnabled({ timeout: 60000 });
+  await openRegions(page);
   await page.getByText('Category bulk controls', { exact: true }).click();
   await page.locator('#btnRedact').click(); await expect(page.locator('#exportProgress')).toBeVisible();
   await page.locator('#chkFaces').uncheck();
   await expect(page.locator('#btnRedact')).not.toHaveAttribute('aria-busy', 'true', { timeout: 60000 });
-  await expect(page.locator('#exportProgress')).toBeHidden(); await expect(page.locator('#btnDownload')).toBeDisabled();
+  await expect(page.locator('#exportProgress')).toBeHidden(); await expect(page.locator('#btnRedact')).not.toHaveAttribute('data-export-state', 'verified');
   await expect(page.locator('#forensicsVerify')).toBeHidden(); await expect(page.locator('#celebrateBackdrop')).toBeHidden();
   await expect(page.locator('#statusText')).toContainText('Edits changed');
 });

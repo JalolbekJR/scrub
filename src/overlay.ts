@@ -28,7 +28,13 @@ export function renderOverlay(detections: Detection[], onDelete?: (index: number
     const { x, y, width, height } = det.bbox;
     const box = document.createElement('div');
     box.className = 'detection-box';
-    if (det.id) { box.dataset.regionId = det.id; box.onclick = () => onSelect?.(det.id!); }
+    if (det.id) {
+      box.dataset.regionId = det.id;
+      if (!document.body.classList.contains('editing-active')) { box.tabIndex = 0; box.setAttribute('role', 'button'); }
+      box.setAttribute('aria-label', 'Select ' + det.type + ' region ' + (i + 1));
+      box.onclick = () => onSelect?.(det.id!);
+      box.onkeydown = e => { if (e.target === box && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onSelect?.(det.id!); } };
+    }
     if (det.id === selected) {
       box.classList.add('selected');
       const handle = document.createElement('span'); handle.className = 'resize-handle'; box.append(handle);
@@ -49,6 +55,7 @@ export function renderOverlay(detections: Detection[], onDelete?: (index: number
     if (onDelete) {
       const del = document.createElement('button');
       del.type = 'button';
+      del.hidden = !document.body.classList.contains('editing-active');
       del.className = 'detection-box-del';
       del.setAttribute('aria-label', `${det.type === 'manual' ? 'Delete manual mask' : 'Exclude ' + det.type + ' suggestion'} ${i + 1}`);
       del.textContent = '✕';

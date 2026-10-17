@@ -18,6 +18,18 @@ const telemetry = document.getElementById('telemetry') as HTMLDivElement;
 let busy = false;
 let pendingFile: File | null = null;
 let pdfTask: PDFDocumentLoadingTask | null = null;
+let cancelDecode: (() => void) | null = null;
+// Invalidate pending decodes before restoring home. Existing downloads own
+// separate Blob URLs; releasing the input must not revoke those URLs.
+export function resetUpload() {
+  pendingFile = null;
+  const gen = nextGeneration();
+  cancelDecode?.(); cancelDecode = null;
+  document.dispatchEvent(new CustomEvent('file:started', { detail: { gen } }));
+  prevPageBtn.onclick = null; nextPageBtn.onclick = null;
+  fileInput.value = '';
+  void releasePdf().catch(() => {});
+}
 async function releasePdf() {
   const task = pdfTask; pdfTask = null;
   if (task) await task.destroy();
@@ -43,11 +55,13 @@ async function loadImage(file: File, gen: number) {
   try {
     await new Promise<void>((res, rej) => {
       const t = setTimeout(() => rej(new Error('Image decode timed out')), 20000);
+      cancelDecode = () => { clearTimeout(t); img.onload = null; img.onerror = null; img.src = ''; rej(new DOMException('Image load cancelled', 'AbortError')); };
       img.onload = () => { clearTimeout(t); res(); };
       img.onerror = () => { clearTimeout(t); rej(new Error('Could not decode this image — it may be corrupt.')); };
       img.src = url;
     });
   } finally {
+    cancelDecode = null;
     URL.revokeObjectURL(url);
   }
   if (gen !== currentGeneration()) return;
@@ -109,7 +123,7 @@ async function loadPdf(file: File, gen: number) {
 
   const arrayBuffer = await file.arrayBuffer();
   if (gen !== currentGeneration()) return;
-  const pdfParams = { data: arrayBuffer, isEvalSupported: false, disableAutoFetch: true, disableStream: true };
+  const pdfParams = { data: arrayBuffer, isEvalSupported: false, disableAutoFetch: true, disableStream: true, verbosity: 0 };
   const task = getDocument(pdfParams as unknown as Parameters<typeof getDocument>[0]);
   pdfTask = task;
   let timer: ReturnType<typeof setTimeout>;
@@ -135,6 +149,7 @@ async function loadPdf(file: File, gen: number) {
   let currentPage = 1;
   let rendering = false;
   await renderPdfPage(doc, currentPage, gen);
+  if (gen !== currentGeneration()) return;
   setStatus(`PDF loaded — ${usablePages} page(s)`, false, true);
 
   prevPageBtn.onclick = async () => {
@@ -186,7 +201,9 @@ export async function handleFile(file: File) {
     // Release PDF.js workers, fonts and cached page resources on replacement,
     // including a rejected replacement. Old navigation cannot render it.
     await releasePdf();
+    if (gen !== currentGeneration()) return;
     const v = await validateFile(file);
+    if (gen !== currentGeneration()) return;
     if (!v.ok) {
       setError(v.reason ?? 'Unsupported file.');
       document.dispatchEvent(new CustomEvent('file:failed', { detail: { gen, file, reason: v.reason } }));
@@ -197,6 +214,7 @@ export async function handleFile(file: File) {
     if (v.kind === 'pdf') await loadPdf(file, gen);
     else await loadImage(file, gen);
   } catch (err) {
+    if (gen !== currentGeneration()) return;
     await releasePdf();
     console.error('file processing failed');
     setError(err instanceof Error ? err.message : 'Could not process this file.');

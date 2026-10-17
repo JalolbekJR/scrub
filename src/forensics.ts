@@ -182,7 +182,7 @@ export async function verifyCleanPdf(blob: Blob, expectedPages?: number): Promis
       if (typeof window !== 'undefined') {
         GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.mjs', import.meta.url).href;
       }
-      task = getDocument({ data: bytes, isEvalSupported: false, disableAutoFetch: true, disableStream: true } as Parameters<typeof getDocument>[0]);
+      task = getDocument({ data: bytes, isEvalSupported: false, disableAutoFetch: true, disableStream: true, verbosity: 0 } as Parameters<typeof getDocument>[0]);
       const doc = await task.promise;
       if (doc.numPages < 1 || (expectedPages !== undefined && doc.numPages !== expectedPages)) {
         threats.push('PDF page count mismatch');

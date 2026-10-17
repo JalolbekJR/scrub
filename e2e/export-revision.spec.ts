@@ -1,3 +1,4 @@
+import { blockNextDownload, openRegions } from './editor-controls';
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { jsPDF } from 'jspdf';
@@ -9,14 +10,16 @@ test('category changes invalidate verified image bytes before and after export',
   await page.goto('/');
   await page.locator('#fileInput').setInputFiles({ name: 'black.jpg', mimeType: 'image/jpeg', buffer: readFileSync(new URL('../fixtures/black.jpg', import.meta.url)) });
   await expect(page.locator('#controlsResult')).not.toHaveClass(/scanning/, { timeout: 60000 });
+  await openRegions(page);
   await page.getByText('Category bulk controls', { exact: true }).click();
   await page.locator('#chkEmails').uncheck();
-  await expect(page.locator('#btnDownload')).toBeDisabled();
+  await expect(page.locator('#btnRedact')).not.toHaveAttribute('data-export-state', 'verified');
+  await blockNextDownload(page);
   await page.locator('#btnRedact').click();
-  await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
-  await page.locator('#celebClose').click();
+  await expect(page.locator('#btnRedact')).toHaveAttribute('data-export-state', 'verified', { timeout: 60000 });
+  await expect(page.locator('#statusText')).toContainText('could not start');
   await page.locator('#chkEmails').check();
-  await expect(page.locator('#btnDownload')).toBeDisabled();
+  await expect(page.locator('#btnRedact')).not.toHaveAttribute('data-export-state', 'verified');
   await expect(page.locator('#forensicsVerify')).toBeHidden();
   await expect(page.locator('#statusText')).not.toContainText('verified');
 });
@@ -31,19 +34,23 @@ test('repeated ordinary downloads avoid file permissions and stale revisions sta
   const original = readFileSync(new URL('../fixtures/black.jpg', import.meta.url));
   await page.locator('#fileInput').setInputFiles({ name: 'black.jpg', mimeType: 'image/jpeg', buffer: original });
   await expect(page.locator('#btnRedact')).toBeEnabled({ timeout: 60000 });
-  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
+  await page.locator('#btnRedact').click(); await expect(page.locator('#celebrateBackdrop')).toBeVisible({ timeout: 60000 });
   const pending = page.waitForEvent('download'); await page.locator('#celebDownload').click();
   const first = await pending;
-  const repeated = page.waitForEvent('download'); await page.locator('#btnDownload').click();
+  const repeated = page.waitForEvent('download'); await page.locator('#celebDownload').click();
   const second = await repeated;
   expect(readFileSync(await first.path())).toEqual(readFileSync(await second.path()));
   expect([...readFileSync(await second.path()).subarray(0, 3)]).toEqual([255, 216, 255]);
   expect(await page.evaluate(() => (window as Window & { saveCalls: number }).saveCalls)).toBe(0);
   expect(readFileSync(new URL('../fixtures/black.jpg', import.meta.url))).toEqual(original);
   let downloads = 0; page.on('download', () => downloads++);
-  await page.getByText('Category bulk controls', { exact: true }).click(); await page.locator('#chkEmails').uncheck();
-  await expect(page.locator('#btnDownload')).toBeDisabled();
-  await page.locator('#btnDownload').evaluate(button => (button as HTMLButtonElement).click());
+  await page.locator('#celebClose').click();
+  // Dismissing completion releases the old retry; a hidden stale action is inert.
+  await page.locator('#celebDownload').dispatchEvent('click');
+  expect(downloads).toBe(0);
+  await page.locator('#fileInput').setInputFiles({ name: 'next.jpg', mimeType: 'image/jpeg', buffer: original });
+  await expect(page.locator('#btnRedact')).toBeEnabled({ timeout: 60000 });
+  await expect(page.locator('#btnRedact')).toHaveAttribute('data-export-state', 'required');
   expect(downloads).toBe(0);
 });
 

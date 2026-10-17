@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { stripJpegMetadata, verifyClean, verifyCleanPdf } from './forensics';
 import { jsPDF } from 'jspdf';
 import { readFileSync } from 'node:fs';
@@ -17,6 +17,21 @@ function pdfBlob(body: string): Blob {
 }
 
 describe('verifyCleanPdf — structural and byte verification of generated PDFs', () => {
+  it('keeps private parser identifiers out of console diagnostics while rejecting non-raster content', async () => {
+    const pdf = new jsPDF();
+    pdf.internal.write('/SYNTHETIC_PRIVATE_COLORSPACE_SENTINEL cs');
+    pdf.text('Ordinary synthetic page', 20, 40);
+    const logs: string[] = [];
+    const capture = (...values: unknown[]) => { logs.push(values.map(String).join(' ')); };
+    const log = vi.spyOn(console, 'log').mockImplementation(capture);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(capture);
+    try {
+      const result = await verifyCleanPdf(pdf.output('blob'), 1);
+      expect(result.clean).toBe(false);
+      expect(logs.join('\n')).not.toContain('SYNTHETIC_PRIVATE_COLORSPACE_SENTINEL');
+    } finally { log.mockRestore(); warn.mockRestore(); }
+  });
+
   it('passes a generated raster PDF with no scripts or user metadata', async () => {
     const r = await verifyCleanPdf(rasterPdfBlob(), 1);
     expect(r.clean).toBe(true);

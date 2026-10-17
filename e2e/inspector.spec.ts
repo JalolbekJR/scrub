@@ -14,7 +14,7 @@ test('appended archive is a structural finding and downloaded JPEG omits it', as
   await page.locator('#forensicDetails > summary').click();
   await expect(page.locator('#forensicsList')).toContainText('Embedded ZIP container');
   await expect(page.locator('#forensicsList')).toContainText('Filename does not match');
-  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
+  await page.locator('#btnRedact').click(); await expect(page.locator('#celebrateBackdrop')).toBeVisible({ timeout: 60000 });
   const pending = page.waitForEvent('download'); await page.locator('#celebDownload').click();
   const bytes = readFileSync(await (await pending).path()); expect(bytes.subarray(0, 3)).toEqual(Buffer.from([255, 216, 255]));
   expect(bytes.includes(Buffer.from('SYNTHETIC_PRIVATE_SENTINEL'))).toBe(false); expect(bytes.includes(Buffer.from('PK\x03\x04'))).toBe(false);
@@ -53,7 +53,7 @@ test('parsed PDF JavaScript and URI actions are reported, then absent from downl
   await expect(page.locator('#forensicsList')).toContainText('PDF JavaScript actions');
   await expect(page.locator('#forensicsList')).toContainText('Link destination needs review');
   await expect(page.locator('#forensicsList')).toContainText('quoted context');
-  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
+  await page.locator('#btnRedact').click(); await expect(page.locator('#celebrateBackdrop')).toBeVisible({ timeout: 60000 });
   const pending = page.waitForEvent('download'); await page.locator('#celebDownload').click(); const bytes = readFileSync(await (await pending).path());
   const result = await page.evaluate(async encoded => {
     const { getDocument } = await import('/e2e/browser-harness.ts'); const task = getDocument({ data: Uint8Array.from(atob(encoded), c => c.charCodeAt(0)), verbosity: 0 });

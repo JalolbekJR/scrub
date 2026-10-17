@@ -11,7 +11,7 @@ test.describe('Bundle (multi-file) upload flow', () => {
   // Two files with face detection + OCR each takes a while; give it room.
   test.setTimeout(120000);
 
-  test('scan → review modal → finished popup → download (no silent saves)', async ({ page }) => {
+  test('scan → review → one-click verified download → completion over home', async ({ page }) => {
     // Fail loudly if anything downloads before the user clicks Download.
     const downloads: string[] = [];
     page.on('download', (d) => downloads.push(d.suggestedFilename()));
@@ -34,13 +34,16 @@ test.describe('Bundle (multi-file) upload flow', () => {
     const chips = page.locator('.batch-chip.on');
     expect(await chips.count()).toBeGreaterThan(0);
 
-    // 2) Press "Redact selected" → the finished popup appears, still NO download.
+    // Download is requested explicitly from review; upload alone never saves.
+    const zipDownload = page.waitForEvent('download', { timeout: 90000 });
     await page.locator('#btnBatchRedact').click();
     await page.waitForFunction(
       () => document.getElementById('celebrateBackdrop')?.hidden === false,
       undefined, { timeout: 60000 }
     );
-    expect(downloads, 'no silent download — user must click Download').toHaveLength(0);
+    const dl = await zipDownload;
+    expect(downloads, 'one download from the explicit primary action').toEqual(['scrubbed-bundle.zip']);
+    await expect(page.locator('.hero')).toBeVisible();
 
     // The popup carries the support / GitHub affordances + a per-file breakdown.
     await expect(page.locator('#celebSupport')).toBeVisible();
@@ -49,9 +52,7 @@ test.describe('Bundle (multi-file) upload flow', () => {
     expect(await page.locator('.celeb-breakdown-list li').count()).toBe(2);
 
     // 3) One click → one ZIP download containing the whole bundle.
-    const zipDownload = page.waitForEvent('download', { timeout: 30000 });
-    await page.locator('#celebDownload').click();
-    const dl = await zipDownload;
+
     expect(dl.suggestedFilename()).toBe('scrubbed-bundle.zip');
     expect(downloads).toEqual(['scrubbed-bundle.zip']);
     const entries = unzipSync(readFileSync(await dl.path()));
@@ -75,11 +76,16 @@ test.describe('Bundle (multi-file) upload flow', () => {
       undefined, { timeout: 90000 }
     );
     expect(await page.locator('.batch-file-row').count()).toBe(2);
+    // A failed review cannot turn into a successful scan by returning to the batch.
+    await page.locator('.batch-file-row').filter({ hasText: 'unsupported.txt' }).getByRole('button', { name: 'Review / Edit' }).click();
+    await expect(page.locator('#statusText')).toContainText(/unsupported|supported|format/i);
+    await page.locator('#returnBatch').click();
     // The failed file is explicitly excluded, while the valid file remains exportable.
     await expect(page.locator('.batch-file-row').filter({ hasText: 'unsupported.txt' })).toContainText('Scan failed — excluded from export');
     await page.locator('#btnBatchRedact').click();
-    await expect(page.locator('#celebrateBackdrop')).toBeVisible({ timeout: 60000 });
-    const pending = page.waitForEvent('download'); await page.locator('#celebDownload').click(); const dl = await pending;
+    await expect(page.locator('#btnBatchVerified')).toBeVisible({ timeout: 60000 });
+    await expect(page.locator('#celebrateBackdrop')).toBeHidden();
+    const pending = page.waitForEvent('download'); await page.locator('#btnBatchVerified').click(); const dl = await pending;
     // A partial batch with one valid result downloads that JPEG directly.
     expect(dl.suggestedFilename()).toBe('scrubbed-one.jpg');
     expect([...readFileSync(await dl.path()).subarray(0, 3)]).toEqual([255, 216, 255]);

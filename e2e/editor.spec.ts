@@ -1,4 +1,5 @@
-import { openEditing, openGeometry } from './editor-controls';
+import { openRegions } from './editor-controls';
+import { blockNextDownload, openEditing, openGeometry } from './editor-controls';
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import type { Page } from '@playwright/test';
@@ -11,6 +12,7 @@ test('individual face geometry, exclusions, restoration and history remain synch
   await page.locator('#fileInput').setInputFiles({ name: 'portrait.png', mimeType: 'image/png', buffer: readFileSync(new URL('../fixtures/astronaut.png', import.meta.url)) });
   await expect(page.locator('#controlsResult')).toBeVisible();
   await expect(page.locator('#controlsResult')).not.toHaveClass(/scanning/, { timeout: 60000 });
+  await openRegions(page);
   const face = page.getByRole('button', { name: 'Face 1, page 1', exact: true });
   await face.click();
   await openGeometry(page);
@@ -23,8 +25,10 @@ test('individual face geometry, exclusions, restoration and history remain synch
   await page.locator('#editorUndo').click(); await expect(inclusion).toBeChecked();
   await page.locator('#editorRedo').click(); await expect(inclusion).not.toBeChecked();
   await inclusion.check(); await expect(inclusion).toBeChecked();
+  await inclusion.uncheck(); await expect(page.locator('#btnRedact')).not.toHaveAttribute('data-export-state', 'verified');
+  await expect(inclusion).toBeFocused(); await inclusion.check();
   const bounds = await page.evaluate(() => Object.fromEntries(['x', 'y', 'width', 'height'].map(key => [key, Number((document.getElementById(`region-${key}`) as HTMLInputElement).value)])));
-  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
+  await page.locator('#btnRedact').click(); await expect(page.locator('#celebrateBackdrop')).toBeVisible({ timeout: 60000 });
   const pending = page.waitForEvent('download'); await page.locator('#celebDownload').click();
   const download = await pending, bytes = readFileSync(await download.path());
   expect(download.suggestedFilename()).toBe('scrubbed.jpg'); expect(bytes.subarray(0, 3)).toEqual(Buffer.from([255, 216, 255]));
@@ -37,8 +41,7 @@ test('individual face geometry, exclusions, restoration and history remain synch
     return count;
   }, { data: bytes.toString('base64'), bounds });
   expect(uncovered).toBe(0);
-  await inclusion.uncheck(); await expect(page.locator('#btnDownload')).toBeDisabled();
-  await expect(inclusion).toBeFocused();
+  await expect(page.locator('.hero')).toBeVisible();
 });
 
 async function synthetic(page: Page) {
@@ -64,7 +67,7 @@ test('brush gestures are undoable, redoable and flattened in downloaded JPEG pix
   await expect(page.locator('.detection-box.manual')).toHaveCount(1);
   await page.locator('#editorUndo').click(); await expect(page.locator('.detection-box.manual')).toHaveCount(0);
   await page.locator('#editorRedo').click(); await expect(page.locator('.detection-box.manual')).toHaveCount(1);
-  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
+  await page.locator('#btnRedact').click(); await expect(page.locator('#celebrateBackdrop')).toBeVisible({ timeout: 60000 });
   const pending = page.waitForEvent('download'); await page.locator('#celebDownload').click();
   const output = await pending; const bytes = readFileSync(await output.path());
   expect(bytes.subarray(0, 3)).toEqual(Buffer.from([255, 216, 255]));
@@ -81,9 +84,11 @@ test('Soft Conceal uses opaque synthesized core pixels in preview and flattened 
   const rect = (await page.locator('#mainCanvas').boundingBox())!;
   await page.mouse.move(rect.x + .2 * rect.width, rect.y + .2 * rect.height); await page.mouse.down();
   await page.mouse.move(rect.x + .8 * rect.width, rect.y + .8 * rect.height); await page.mouse.up();
+  await openRegions(page);
   await page.locator('#regionStyle').selectOption('soft');
+  await openRegions(page);
   await page.locator('#regionColor').fill('#bc8760'); await page.locator('#regionColor').dispatchEvent('change');
-  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
+  await page.locator('#btnRedact').click(); await expect(page.locator('#celebrateBackdrop')).toBeVisible({ timeout: 60000 });
   const pending = page.waitForEvent('download'); await page.locator('#celebDownload').click();
   const output = await pending; const bytes = readFileSync(await output.path());
   const pixel = await page.evaluate(async data => {
@@ -107,7 +112,7 @@ test('mask eraser restores original pixels reversibly and exports only the remai
   expect((await core())[0]).toBe(237);
   await page.locator('#editorUndo').click(); expect((await core())[0]).toBe(0);
   await page.locator('#editorRedo').click(); expect((await core())[0]).toBe(237);
-  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
+  await page.locator('#btnRedact').click(); await expect(page.locator('#celebrateBackdrop')).toBeVisible({ timeout: 60000 });
   const pending = page.waitForEvent('download'); await page.locator('#celebDownload').click(); const output = await pending;
   const pixels = await page.evaluate(async data => {
     const img = new Image(); img.src = `data:image/jpeg;base64,${data}`; await img.decode();
@@ -124,13 +129,14 @@ test('replacing an edited file requires confirmation even after verification if 
   const r = (await page.locator('#mainCanvas').boundingBox())!;
   await page.mouse.move(r.x + .2 * r.width, r.y + .2 * r.height); await page.mouse.down();
   await page.mouse.move(r.x + .6 * r.width, r.y + .6 * r.height); await page.mouse.up();
-  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
-  await page.locator('#celebClose').click();
+  await blockNextDownload(page);
+  await page.locator('#btnRedact').click(); await expect(page.locator('#btnRedact')).toHaveAttribute('data-export-state', 'verified', { timeout: 60000 });
   const warning = page.waitForEvent('dialog');
   const replacement = page.locator('#fileInput').setInputFiles({ name: 'replacement.jpg', mimeType: 'image/jpeg', buffer: readFileSync(new URL('../fixtures/black.jpg', import.meta.url)) });
   const dialog = await warning; expect(dialog.type()).toBe('confirm'); await dialog.dismiss(); await replacement;
   await expect(page.locator('#loadedFilename')).toHaveText('synthetic.png');
-  await expect(page.locator('#btnDownload')).toBeEnabled();
+  await expect(page.locator('#btnRedact')).toHaveAttribute('data-export-state', 'verified');
+  await openRegions(page);
   await expect(page.getByRole('button', { name: 'Manual 1, page 1', exact: true })).toBeVisible();
 });
 

@@ -10,7 +10,7 @@ The public website may run an older build. This repository does not establish wh
 
 1. **Drop a file.** Choose a photo or PDF; processing stays in your browser.
 2. **Review what's found.** Include, exclude or restore suggestions. Use Customize to cover missed content and adjust masks.
-3. **Download clean.** Prepare a copy, review the preview and download after export checks pass.
+3. **Download clean.** Choose Download protected copy. Scrub verifies the current revision, starts a normal browser download and returns home. A short-lived retry is available in the optional completion window.
 
 Advanced controls are optional. You can select individual regions, draw rectangles or ellipses, paint with a brush, erase brush coverage, change styles, undo/redo and return from preview to editing. PDF edits belong to their pages. Mixed batches produce a ZIP with distinct filenames.
 

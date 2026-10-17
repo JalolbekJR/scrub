@@ -11,9 +11,9 @@ import { DocumentRevision, type RevisionToken } from './revision';
 import { selectedTypes } from './autoredact';
 import { initTheme } from './theme';
 import { initUpload } from './upload';
-import { buildExport, triggerDownload, enableDownload, buildBatchBlob, setPdfContext, storeReviewedPage, getReviewedPage, resetExportContext, type BuiltExport } from './export';
+import { buildExport, triggerDownload, buildBatchBlob, setPdfContext, storeReviewedPage, getReviewedPage, resetExportContext, type BuiltExport } from './export';
 import { detectFaces } from './detectors/face';
-import { detectPii } from './detectors/pii';
+import { cancelPii, detectPii } from './detectors/pii';
 import { inspectOcrWords } from './threat-text';
 import { renderRegions } from './mask-renderer';
 import { initEditor } from './editor-ui';
@@ -21,15 +21,17 @@ import { renderOverlay, clearOverlay, updateCountBadge } from './overlay';
 import { verifyClean, verifyCleanPdf, type ForensicReport, type Finding, type VerifyResult } from './forensics';
 import { inspectOriginal, cancelOriginalInspection } from './inspection-client';
 import { startScan, setPhase, phaseLog, updateOcrProgress, finishScan, cancelScan } from './scanner';
-import { celebrate } from './celebrate';
+import { celebrate, closeCelebration, type CelebrateSummary } from './celebrate';
 import { initTicker } from './ticker';
-import { enqueue, initQueue, getBatchPhase, isBatchActive, fileScanned, fileFinished, startRedactPhase, getCurrentScanResult } from './queue';
+import { resetQueue, enqueue, initQueue, getBatchPhase, isBatchActive, fileScanned, fileFinished, startRedactPhase, getCurrentScanResult } from './queue';
 import type { ScanResult } from './types';
-import { handleFile } from './upload';
+import { resetUpload, handleFile } from './upload';
 import { LIMITS, safeBaseName } from './validate';
 import { exportBlockedBy } from './failclosed';
 import type { Detection, DetectionType, FileLoadedDetail } from './types';
 import { zip } from 'fflate';
+import { DownloadReceipt, type DownloadCopy } from './download-receipt';
+import { initDocumentView } from './document-view';
 
 initTheme();
 
@@ -96,7 +98,7 @@ function acceptFiles(files: File[]) {
   if (notes.length > 0) setStatus(`Heads up: ${notes.join('; ')}.`, false);
 
   if (hasUnsavedEdits() && !window.confirm('Replace these files and discard their edits that have not been downloaded?')) return;
-  documentSessions.clear();
+  completion.clear(); closeCelebration(); clearBatchSession();
   enqueue(batch);
 }
 
@@ -123,6 +125,7 @@ let currentIsPdf = false;
 let metaItemsFound = 0;
 let forensicsGate: Promise<void> = Promise.resolve();
 let activeGen = 0;
+let activeWorkPhase = getBatchPhase();
 let currentFile: File | null = null;
 let currentDetectionFailure: string | null = null;
 let forensicsFailed = false;
@@ -154,7 +157,7 @@ function markFound(itemId: string, found: boolean) {
 // After a file loads, run the full detection pipeline
 document.addEventListener('file:loaded', async (e: Event) => {
   const { canvas, cleanImageData, isPdf, pdfDoc, pageCount, currentPage, gen } = (e as CustomEvent<FileLoadedDetail>).detail;
-  if (gen !== activeGen) return; // a newer file has superseded this one
+  if (gen !== activeGen || activeWorkPhase !== getBatchPhase()) return; // superseded input or operation
   const epoch = ++pageEpoch;
   faceController?.abort();
   const controller = new AbortController(); faceController = controller;
@@ -208,7 +211,7 @@ document.addEventListener('file:loaded', async (e: Event) => {
   dropZone.classList.add('detecting');
 
   await forensicsGate;
-  if (gen !== activeGen || epoch !== pageEpoch) return;
+  if (gen !== activeGen || epoch !== pageEpoch || activeWorkPhase !== getBatchPhase()) return;
 
   let faceFailed = false;
   let ocrFailed = false;
@@ -285,15 +288,11 @@ document.addEventListener('file:loaded', async (e: Event) => {
 
   let msg: string;
   if (parts.length > 0) {
-    msg = `Suggestions: ${parts.join(', ')}. Review for anything missed.`;
+    msg = `${parts.join(', ')} found. Check that nothing was missed.`;
   } else {
     msg = 'No supported faces or private text detected. Review the image and add boxes for anything missed.';
   }
-  msg += forensicsFailed
-    ? '  Metadata inspection could not complete.'
-    : metaItemsFound > 0
-      ? `  ${metaItemsFound} embedded finding${metaItemsFound !== 1 ? 's' : ''} will be stripped on export.`
-      : '  No supported embedded findings detected.';
+  if (forensicsFailed) msg += ' Original-file inspection failed; use Retry scan.';
 
   // Be honest when a detector didn't run — "nothing found" must not be confused
   // with "the scanner failed". Prompt the user to review manually.
@@ -333,10 +332,13 @@ document.addEventListener('file:loaded', async (e: Event) => {
   setStatus(
     currentDetectionFailure
       ? `Detection failed — export blocked. Use Retry scan.`
-      : 'Scan finished. Review your file, then prepare a protected copy.',
+      : 'Check the suggested covers, then download your protected copy.',
     false,
     !currentDetectionFailure
   );
+
+  if (!currentDetectionFailure) statusBar.hidden = true;
+  documentView.fit();
 
   const phase = getBatchPhase();
 
@@ -389,7 +391,8 @@ document.addEventListener('file:loaded', async (e: Event) => {
         storeReviewedPage(pageNumber, page.regions().map(d => ({ ...d, included: d.included && sel.types.has(d.type) })), { width: page.width, height: page.height } as HTMLCanvasElement);
       }
       const selection = Object.fromEntries(['face', 'email', 'phone', 'card', 'name', 'manual'].map(type => [type, type === 'manual' || sel.types.has(type as DetectionType)])) as Record<DetectionType, boolean>;
-      const built = await buildBatchBlob({ selection });
+      exportController = new AbortController();
+      const built = await buildBatchBlob({ selection, signal: exportController.signal });
       const blob = built.blob;
       const result = built.isPdf ? await verifyCleanPdf(blob, built.pageCount) : await verifyClean(blob);
       if (!documentRevision.matches(token)) throw new Error('Document changed during batch export');
@@ -399,6 +402,7 @@ document.addEventListener('file:loaded', async (e: Event) => {
       batchOutputs.push({ filename: availableExportName(`scrubbed-${baseName}.${built.isPdf ? 'pdf' : 'jpg'}`, batchOutputs.map(f => f.filename)), blob });
       batchBreakdown.push({ name: stored.file.name, summary: built.isPdf ? `${built.pageCount}-page raster PDF rebuilt and verified` : summariseRemoved(toRedact, metaRemoved) });
     } catch {
+      if (gen !== activeGen) return;
       console.error('Batch file export failed');
       batchAllClean = false;
       batchBreakdown.push({ name: stored.file.name, summary: 'failed — not included' });
@@ -439,15 +443,15 @@ btnCancelExport.addEventListener('click', () => exportController?.abort());
 
 function showExportProgress() {
   exportProgressBar.style.width = '0%';
-  exportProgressText.textContent = 'Sanitising pages…';
+  exportProgressText.textContent = 'Checking your file…';
   exportProgress.hidden = false;
 }
 function updateExportProgress(done: number, total: number) {
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   exportProgressBar.style.width = `${pct}%`;
   exportProgressText.textContent = done === 0
-    ? `Sanitising ${total} pages…`
-    : `Sanitising page ${done} of ${total}…`;
+    ? `Checking ${total} pages…`
+    : `Checking page ${done} of ${total}…`;
 }
 function hideExportProgress() {
   exportProgress.hidden = true;
@@ -457,10 +461,17 @@ function hideExportProgress() {
 // ── Redact button ─────────────────────────────────────────────────────────────
 
 let redacting = false;
+let buttonAnimationTimer: ReturnType<typeof setTimeout> | undefined;
 btnRedact.addEventListener('click', async () => {
   // Ignore repeat clicks while a redact/export is already in flight, so button
   // spam can't launch overlapping builds or stack multiple finished popups.
-  if (redacting) return;
+  if (redacting || downloading) return;
+  if (batchReviewResults.length > 1) {
+    if (editingBatchResult) returnBatch.click();
+    else showBatchModal(batchReviewResults, true);
+    return;
+  }
+  if (lastBuilt?.verified && documentRevision.matches(lastBuilt.token)) { await doDownload(); return; }
   if (!currentCanvas || !originalImageData) return;
   if (!detectionComplete) {
     setStatus('Scanning is still in progress; wait before exporting.', false);
@@ -475,15 +486,14 @@ btnRedact.addEventListener('click', async () => {
   const selection = selectedTypes();
   const delivered = lastBuilt?.downloaded;
   redacting = true;
-  btnDownload.disabled = true;
+  btnRedact.dataset.exportState = 'required';
   forensicsVerify.hidden = true;
   if (lastBuilt) lastBuilt.verified = false;
   btnRedact.setAttribute('aria-busy', 'true');
+  btnRedact.dataset.exportState = 'checking';
+  btnRedact.querySelector('.btn-text')!.textContent = 'Checking your file…';
 
   try {
-    const ctx = currentCanvas.getContext('2d')!;
-    ctx.putImageData(originalImageData, 0, 0);
-
     const toRedact = currentDetections.filter((d) => {
       if (d.included === false) return false;
       if (d.id) return true;
@@ -495,16 +505,14 @@ btnRedact.addEventListener('click', async () => {
       return true;
     });
 
-    renderRegions(currentCanvas, toRedact);
-    clearOverlay();
-
     if (currentIsPdf) {
       for (const [pageNumber, page] of editorDocument.pages) storeReviewedPage(pageNumber, page.regions(), { width: page.width, height: page.height } as HTMLCanvasElement);
     }
-    showScrubber(originalImageData, currentCanvas);
+    refreshOverlay();
 
-    btnRedact.classList.add('pulsed', 'done');
-    setTimeout(() => btnRedact.classList.remove('pulsed', 'done'), 2000);
+    btnRedact.classList.add('pulsed');
+    clearTimeout(buttonAnimationTimer);
+    buttonAnimationTimer = setTimeout(() => { if (gen === activeGen) btnRedact.classList.remove('pulsed', 'done'); }, 2000);
 
     // Build the final file and verify it BEFORE offering the download, so the
     // success message reflects the actual exported bytes — not an assumption.
@@ -550,21 +558,26 @@ btnRedact.addEventListener('click', async () => {
       return;
     }
     lastBuilt.verified = true;
-    enableDownload();
+    btnRedact.dataset.exportState = 'verified';
 
     setStatus(lastBuilt.isPdf ? `${lastBuilt.pageCount}-page raster PDF rebuilt and verified — ready to download` : `${toRedact.length} region${toRedact.length !== 1 ? 's' : ''} rendered · export structure verified — ready to download`, false, true);
 
-    celebrate(
-      { redacted: toRedact.length, metaItems: metaItemsFound, verifiedClean: true, pdfPages: lastBuilt.pageCount },
-      () => { void doDownload(); }, btnRedact
-    );
+    await doDownload();
+  } catch {
+    if (gen === activeGen && documentRevision.matches(token)) {
+      lastBuilt = null; exportController?.abort(); hideExportProgress();
+      setStatus('Could not check this copy. Your edits are still here. Try again or Start over.', false);
+    }
   } finally {
-    redacting = false;
-    btnRedact.removeAttribute('aria-busy');
+    if (gen === activeGen) {
+      redacting = false;
+      btnRedact.dataset.exportState = lastBuilt?.verified ? 'verified' : 'required';
+      btnRedact.removeAttribute('aria-busy');
+      btnRedact.querySelector('.btn-text')!.textContent = 'Download protected copy';
+    }
   }
 });
 
-const btnDownload = document.getElementById('btnDownload') as HTMLButtonElement;
 
 let lastBuilt: (BuiltExport & { token: RevisionToken; verified: boolean; downloaded?: boolean }) | null = null;
 
@@ -575,12 +588,17 @@ async function doDownload() {
   downloading = true;
   try {
     const delivered = await triggerDownload(prepared.filename, prepared.blob, () => lastBuilt === prepared && prepared.verified && documentRevision.matches(prepared.token));
-    if (delivered && lastBuilt === prepared && documentRevision.matches(prepared.token)) prepared.downloaded = true;
+    if (delivered && lastBuilt === prepared && documentRevision.matches(prepared.token)) {
+      prepared.downloaded = true;
+      finishDownload(prepared, { redacted: currentDetections.filter(d => d.included !== false).length, metaItems: metaItemsFound, verifiedClean: true, pdfPages: prepared.pageCount });
+    }
+  } catch {
+    setStatus('Your browser could not start the download. Try Download protected copy again.', false);
   }
   finally { downloading = false; }
 }
 
-btnDownload.addEventListener('click', () => { void doDownload(); });
+
 
 // ── Manual redaction: draw / delete boxes the detectors missed ────────────────
 
@@ -590,7 +608,8 @@ function invalidateExport() {
   exportController?.abort();
   hideExportProgress();
   lastBuilt = null;
-  btnDownload.disabled = true;
+  if (getBatchPhase() !== 'redact') { batchOutputs = []; partialDownload.hidden = true; partialNotice.hidden = true; }
+  btnRedact.dataset.exportState = 'required';
   forensicsVerify.hidden = true;
   if (!(document.getElementById('celebrateBackdrop') as HTMLElement).hidden) document.getElementById('celebClose')?.click();
   if (currentCanvas) setStatus('Edits changed. Verify before downloading.', false);
@@ -619,7 +638,10 @@ function refreshOverlay() {
 function deleteDetection(index: number) {
   invalidateExport();
   const region = currentDetections[index];
-  if (editorPage && region?.id) editorPage.remove(region.id);
+  if (editorPage && region?.id) {
+    if (region.type === 'manual') editorPage.remove(region.id);
+    else editorPage.update(region.id, { included: false });
+  }
   currentDetections = editorPage?.regions() ?? currentDetections.filter((_, i) => i !== index);
   editor.refresh();
   updateCountBadge('countFaces',  countType('face'));
@@ -641,11 +663,64 @@ const editor = initEditor({
   render: selected => { selectedRegion = selected; refreshOverlay(); },
 });
 
+const documentView = initDocumentView(() => editor.cancel());
+const completion = new DownloadReceipt(() => {
+  const retry = document.getElementById('celebDownload') as HTMLButtonElement;
+  retry.disabled = true; retry.textContent = 'Retry expired — clean another file';
+  document.getElementById('celebBreakdown')!.replaceChildren();
+});
+
+function clearBatchSession() {
+  resetQueue(); documentSessions.clear(); batchSelections.clear(); batchReviewResults = []; editingBatchResult = null;
+  batchOutputs = []; batchBreakdown = []; batchAllClean = true; batchDownloadedEpoch = null;
+  batchRedactedTotal = 0; batchMetaTotal = 0; batchEpoch++;
+  partialDownload.hidden = true; partialNotice.hidden = true; returnBatch.hidden = true;
+}
+
+function resetHome(force = false): boolean {
+  if (!force && hasUnsavedEdits() && !window.confirm('Discard your unfinished edits and return home?')) return false;
+  closeCelebration(); completion.clear();
+  clearBatchSession(); resetUpload(); cancelPii(true);
+  closeBatchModal(); documentView.reset(); editor.reset(); clearOverlay();
+  currentPageNum = 1; currentIsPdf = false; metaItemsFound = 0; selectedRegion = null;
+  for (const id of ['mainCanvas', 'originalCanvas', 'redactedCanvas']) {
+    const canvas = document.getElementById(id) as HTMLCanvasElement;
+    canvas.width = 0; canvas.height = 0;
+  }
+  for (const id of ['queueBar', 'exportProgress', 'forensicsVerify', 'forensicDetails', 'pdfWarning', 'pageReviewStatus', 'returnBatch', 'statusBar', 'telemetry']) document.getElementById(id)!.hidden = true;
+  forensicsList.replaceChildren(); forensicsSummary.textContent = '';
+  document.getElementById('batchFileList')!.replaceChildren(); document.getElementById('batchModalSummary')!.textContent = '';
+  for (const id of ['countFaces', 'countEmails', 'countPhones', 'countCards', 'countNames', 'countMetadata']) updateCountBadge(id, 0); filenameLabel.textContent = ''; filenameLabel.title = '';
+  forensicDetails.open = false; bulk.open = false;
+  for (const checkbox of [chkFaces, chkEmails, chkPhones, chkCards, chkNames]) checkbox.checked = true;
+  document.body.classList.remove('document-loaded', 'scan-complete', 'is-preview', 'editing-active');
+  onboarding.hidden = false; fileHeader.hidden = true; controlsResult.hidden = true; statusBar.hidden = true; statusText.textContent = '';
+  document.getElementById('canvasArea')!.hidden = true; document.getElementById('pdfNav')!.hidden = true;
+  resetView(); document.getElementById('canvasArea')!.hidden = true;
+  setReviewControls(false); document.getElementById('pageInfo')!.textContent = '';
+  window.scrollTo({ top: 0, behavior: 'instant' }); dropZone.focus({ preventScroll: true });
+  return true;
+}
+
+function finishDownload(copy: DownloadCopy, summary: CelebrateSummary) {
+  // The browser now owns the initiated download. Clearing its source document
+  // cannot revoke that URL, and only these verified output bytes may be retried.
+  resetHome(true); completion.keep({ filename: copy.filename, blob: copy.blob });
+  celebrate(summary, async () => {
+    const retry = completion.current(); if (!retry) return;
+    try { await triggerDownload(retry.filename, retry.blob, () => completion.current() === retry); }
+    catch { document.getElementById('celebSummary')!.textContent = 'Your browser could not start the download. Try Download again or clean another file.'; }
+  }, dropZone, () => { completion.clear(); document.getElementById('celebBreakdown')!.replaceChildren(); document.getElementById('celebSummary')!.textContent = ''; });
+}
+
+document.getElementById('landingLogo')!.addEventListener('click', event => { event.preventDefault(); resetHome(); });
+
 // Loaded files use the same controls in a compact workspace.
-btnRedact.querySelector('.btn-text')!.textContent = 'Prepare copy';
-btnRedact.setAttribute('aria-label', 'Prepare and verify export');
+btnRedact.querySelector('.btn-text')!.textContent = 'Download protected copy';
+btnRedact.dataset.exportState = 'required';
+btnRedact.setAttribute('aria-label', 'Download protected copy');
 const fileHeader = document.createElement('div'); fileHeader.className = 'loaded-file-header'; fileHeader.id = 'fileHeader'; fileHeader.hidden = true;
-const brand = document.createElement('strong'); brand.textContent = 'Scrub';
+const brand = document.createElement('button'); brand.type = 'button'; brand.id = 'homeLogo'; brand.className = 'home-logo'; brand.textContent = 'Scrub'; brand.setAttribute('aria-label', 'Scrub home'); brand.onclick = () => { resetHome(); };
 const filenameLabel = document.createElement('span'); filenameLabel.id = 'loadedFilename'; filenameLabel.className = 'loaded-filename';
 const pageStatus = document.createElement('span'); pageStatus.id = 'pageReviewStatus';
 const localPrivacy = document.createElement('span'); localPrivacy.className = 'local-privacy'; localPrivacy.textContent = 'On device · no uploads';
@@ -654,34 +729,35 @@ const headerActions = document.createElement('div'); headerActions.className = '
 function headerButton(label: string, id: string, action: () => void) {
   const b = document.createElement('button'); b.type = 'button'; b.id = id; b.textContent = label; b.onclick = action; headerActions.append(b); return b;
 }
-headerButton('New file', 'newFile', () => (document.getElementById('fileInput') as HTMLInputElement).click());
+headerButton('Start over', 'newFile', () => { resetHome(); });
 const customize = headerButton('Customize', 'customize', () => {
   editor.setCustomization(!editor.isCustomizing());
+  if (!editor.isCustomizing()) documentView.reset();
   (document.getElementById('retryScan') as HTMLElement).hidden = !editor.isCustomizing() && !currentDetectionFailure && !forensicsFailed;
 });
 customize.setAttribute('aria-expanded', 'false'); customize.setAttribute('aria-controls', 'editingTools');
 headerButton('Preview', 'previewToggle', () => {
   if (!currentCanvas || !originalImageData || !detectionComplete) return;
   editor.cancel();
-  if (document.body.classList.contains('is-preview')) resetView(false);
+  if (document.body.classList.contains('is-preview')) resetView();
   else { refreshOverlay(); showScrubber(originalImageData, currentCanvas); }
 });
 headerButton('Review suggestions', 'showRegions', () => {
   editor.refresh();
   document.getElementById('regionInspector')!.classList.add('sheet-open');
-  (document.querySelector('#regionInspector button') as HTMLElement | null)?.focus();
+  editor.showList();
 });
 headerButton('Retry scan', 'retryScan', () => { if (currentFile && !isBatchActive()) void handleFile(currentFile); });
 const returnBatch = headerButton('Return to batch review', 'returnBatch', () => {
   editor.cancel();
   if (editingBatchResult) {
     editingBatchResult.detections = editorDocument.pages.get(1)?.regions() ?? editingBatchResult.detections;
-    editingBatchResult.scanFailure = editorDocument.failedPages.size > 0 ? 'A page scan failed' : undefined;
+    editingBatchResult.scanFailure = !detectionComplete ? editingBatchResult.scanFailure : currentDetectionFailure ?? (editorDocument.failedPages.size > 0 ? 'A page scan failed' : undefined);
   }
   editingBatchResult = null; returnBatch.hidden = true; showBatchModal(batchReviewResults, true);
 });
 returnBatch.hidden = true;
-headerActions.append(btnRedact, btnDownload);
+headerActions.append(btnRedact);
 document.querySelector('.main-content')!.prepend(fileHeader);
 document.getElementById('canvasArea')!.before(controlsResult);
 const inspector = document.getElementById('regionInspector')!;
@@ -698,10 +774,15 @@ document.addEventListener('keydown', e => {
 });
 
 const batchBackdrop = document.getElementById('batchBackdrop') as HTMLDivElement;
+const partialDownload = document.createElement('button'); partialDownload.id = 'btnBatchVerified'; partialDownload.type = 'button'; partialDownload.className = 'btn btn-secondary'; partialDownload.hidden = true;
+const partialNotice = document.createElement('p'); partialNotice.setAttribute('role', 'alert'); partialNotice.hidden = true; partialNotice.textContent = 'Some files failed and will not be included. Retry all files, or explicitly download only the verified files below.';
+document.getElementById('btnBatchRedact')!.before(partialNotice, partialDownload);
+partialDownload.onclick = () => { void downloadAllBatch(batchEpoch, true); };
+
 
 let batchFocus: HTMLElement | null = null;
 function batchKey(e: KeyboardEvent) {
-  if (e.key === 'Escape') { e.preventDefault(); closeBatchModal(); return; }
+  if (e.key === 'Escape') { e.preventDefault(); resetHome(); return; }
   if (e.key !== 'Tab') return;
   const items = [...batchBackdrop.querySelectorAll<HTMLElement>('button, input, a[href]')].filter(el => !el.hasAttribute('disabled') && el.offsetParent !== null);
   const first = items[0], last = items.at(-1); if (!first || !last) return;
@@ -715,11 +796,15 @@ function openBatchModal() {
 }
 function closeBatchModal() {
   batchBackdrop.hidden = true; document.removeEventListener('keydown', batchKey);
-  batchFocus?.focus();
+  const focus = batchFocus; batchFocus = null; focus?.focus();
   setReviewControls(detectionComplete && !isBatchActive());
 }
 
 function setReviewControls(enabled: boolean) {
+  if (!redacting) {
+    const label = batchReviewResults.length > 1 ? 'Review batch and download' : 'Download protected copy';
+    btnRedact.querySelector('.btn-text')!.textContent = label; btnRedact.setAttribute('aria-label', label);
+  }
   btnRedact.disabled = !enabled;
   for (const id of ['previewToggle', 'retryScan', 'showRegions', 'customize']) (document.getElementById(id) as HTMLButtonElement).disabled = !enabled;
   (document.getElementById('retryScan') as HTMLElement).hidden = !editor.isCustomizing() && !currentDetectionFailure && !forensicsFailed;
@@ -764,7 +849,7 @@ document.getElementById('btnBatchRedact')!.addEventListener('click', () => {
   startRedactPhase();
 });
 document.getElementById('btnBatchCancel')!.addEventListener('click', () => {
-  closeBatchModal();
+  resetHome();
 });
 
 // Bundle the collected files into one ZIP (store mode — the JPEGs are already
@@ -784,54 +869,35 @@ function zipOutputs(files: { filename: string; blob: Blob }[]): Promise<Blob> {
   });
 }
 
-// Save the whole bundle as a single ZIP. Falls back to individual saves only if
-// zipping fails, so the user never leaves without their files.
-async function downloadAllBatch(epoch: number) {
-  if (epoch !== batchEpoch || batchOutputs.length === 0) return;
+// Package only verified outputs; a stale epoch or any failed file blocks the bundle.
+async function downloadAllBatch(epoch: number, allowPartial = false) {
+  if (epoch !== batchEpoch || (!batchAllClean && !allowPartial) || batchOutputs.length === 0) return;
   const files = [...batchOutputs];
-  if (files.length === 1) {
-    const delivered = await triggerDownload(files[0].filename, files[0].blob, () => epoch === batchEpoch);
-    if (delivered && epoch === batchEpoch) batchDownloadedEpoch = epoch;
-    return;
-  }
+  const summary: CelebrateSummary = { redacted: batchRedactedTotal, metaItems: batchMetaTotal, verifiedClean: true, perFile: [...batchBreakdown], downloadableFiles: files.length };
   try {
-    setStatus('Packaging your files into a ZIP…', true);
-    const zipBlob = await zipOutputs(files);
+    setStatus('Checking your files and packaging the download…', true);
+    const copy = files.length === 1 ? files[0] : { filename: 'scrubbed-bundle.zip', blob: await zipOutputs(files) };
     if (epoch !== batchEpoch) return;
-    const delivered = await triggerDownload('scrubbed-bundle.zip', zipBlob, () => epoch === batchEpoch);
+    const delivered = await triggerDownload(copy.filename, copy.blob, () => epoch === batchEpoch);
     if (!delivered || epoch !== batchEpoch) return;
     batchDownloadedEpoch = epoch;
-    setStatus(`Downloaded scrubbed-bundle.zip · ${batchOutputs.length} files`, false, true);
+    finishDownload(copy, summary);
   } catch {
     if (epoch !== batchEpoch) return;
     console.error('ZIP packaging failed');
-    setStatus('Could not build the ZIP — saving files individually…', false);
-    files.forEach(({ filename, blob }, i) => setTimeout(async () => {
-      if (epoch !== batchEpoch) return;
-      const delivered = await triggerDownload(filename, blob, () => epoch === batchEpoch);
-      if (delivered && epoch === batchEpoch && i === files.length - 1) batchDownloadedEpoch = epoch;
-    }, i * 150));
+    setStatus('Could not start the bundle download. Your files are still here; review the batch and try again.', false);
+    showBatchModal(batchReviewResults, true);
   }
 }
 
-// All bundle files are redacted & verified — show the SAME finished popup as the
-// single-file flow, now with a per-file breakdown and a single ZIP download.
 function showBatchComplete() {
   setReviewControls(detectionComplete);
-  const epoch = batchEpoch;
-  const n = batchOutputs.length;
-  if (n === 0) {
-    setStatus('No files passed processing and verification; nothing is ready to download.', false);
+  if (!batchAllClean || batchOutputs.length === 0) {
+    setStatus(batchOutputs.length === 0 ? 'No files passed processing and verification; no bundle was downloaded. Review the batch and retry.' : 'Some files failed processing or verification. No bundle was downloaded. Review the batch and retry.', false);
+    showBatchModal(batchReviewResults, true);
     return;
   }
-  setStatus(
-    `${n} file${n !== 1 ? 's' : ''} scrubbed${batchAllClean ? ' · export structure verified' : ''} — ready to download`,
-    false, true,
-  );
-  celebrate(
-    { redacted: batchRedactedTotal, metaItems: batchMetaTotal, verifiedClean: batchAllClean, perFile: batchBreakdown, downloadableFiles: n },
-    () => downloadAllBatch(epoch),
-  );
+  void downloadAllBatch(batchEpoch);
 }
 
 // One toggle chip inside a file row. Pre-checked; keeps `onToggle` in sync and
@@ -855,6 +921,7 @@ function makeChip(label: string, onToggle: (on: boolean) => void, included = tru
 
 function showBatchModal(results: ScanResult[], preserve = false) {
   batchReviewResults = results;
+  setReviewControls(detectionComplete);
   const summary = document.getElementById('batchModalSummary') as HTMLParagraphElement;
   const fileList = document.getElementById('batchFileList') as HTMLDivElement;
 
@@ -931,6 +998,10 @@ function showBatchModal(results: ScanResult[], preserve = false) {
     fileList.appendChild(row);
   }
 
+  const partial = batchOutputs.length > 0 && !batchAllClean;
+  partialDownload.hidden = !partial;
+  partialNotice.hidden = !partial;
+  partialDownload.textContent = 'Download ' + batchOutputs.length + ' verified file' + (batchOutputs.length === 1 ? '' : 's') + ' only';
   openBatchModal();
 }
 
@@ -940,7 +1011,7 @@ function resetView(disableDownload = true) {
   const singleWrap   = document.getElementById('singleCanvasWrap') as HTMLDivElement;
   scrubberWrap.hidden = true;
   singleWrap.hidden = false;
-  if (disableDownload) btnDownload.disabled = true;
+  if (disableDownload) btnRedact.dataset.exportState = lastBuilt?.verified && documentRevision.matches(lastBuilt.token) ? 'verified' : 'required';
   document.body.classList.remove('is-preview');
   document.getElementById('previewToggle')!.textContent = 'Preview';
   btnRedact.classList.remove('pulsed', 'done');
@@ -970,7 +1041,7 @@ function showScrubber(origData: ImageData, workCanvas: HTMLCanvasElement) {
   origCanvas.style.height = redCanvas.style.height = '100%';
   singleWrap.hidden = true; scrubberWrap.hidden = false;
   document.body.classList.add('is-preview');
-  document.getElementById('previewToggle')!.textContent = 'Back to editing';
+  document.getElementById('previewToggle')!.textContent = 'Back to review';
   if (!container.dataset.wired) {
     container.dataset.wired = 'true';
     let pointer: number | null = null;
@@ -1044,9 +1115,15 @@ const onboarding = document.getElementById('onboarding') as HTMLElement;
 document.addEventListener('file:started', (e: Event) => {
   cancelScan();
   faceController?.abort();
+  cancelPii();
+  clearTimeout(buttonAnimationTimer);
+  btnRedact.classList.remove('pulsed', 'done');
   cancelOriginalInspection();
+  completion.clear();
+  redacting = false; btnRedact.removeAttribute('aria-busy');
+  btnRedact.querySelector('.btn-text')!.textContent = 'Download protected copy';
   const { gen } = (e as CustomEvent<{ gen: number }>).detail;
-  activeGen = gen;
+  activeGen = gen; activeWorkPhase = getBatchPhase();
   document.body.classList.remove('scan-complete');
   editorDocument = new EditorDocument(`document-${gen}`);
   editorPage = null;
@@ -1068,7 +1145,7 @@ document.addEventListener('file:started', (e: Event) => {
   currentFile = null;
   currentDetections = [];
   lastBuilt = null;
-  btnDownload.disabled = true;
+  btnRedact.dataset.exportState = 'required';
   (document.getElementById('canvasArea') as HTMLElement).hidden = true;
   (document.getElementById('controlsPanel') as HTMLElement).hidden = true;
   (document.getElementById('pdfNav') as HTMLElement).hidden = true;
@@ -1090,13 +1167,14 @@ document.addEventListener('page:started', (e: Event) => {
   detectionComplete = false;
   setReviewControls(false); editor.refresh();
   lastBuilt = null;
-  btnDownload.disabled = true;
+  btnRedact.dataset.exportState = 'required';
 });
 
 document.addEventListener('file:raw', (e: Event) => {
   const { file, gen } = (e as CustomEvent<{ file: File; gen: number }>).detail;
   activeGen = gen;
   currentFile = file;
+  filenameLabel.title = file.name;
   const previous = documentSessions.get(file);
   if (previous) editorDocument = previous;
   else documentSessions.set(file, editorDocument);
@@ -1140,6 +1218,11 @@ document.addEventListener('file:raw', (e: Event) => {
 // — then stop the scanner cleanly so the UI never hangs.
 document.addEventListener('file:failed', (e: Event) => {
   const { gen, file } = (e as CustomEvent<{ gen: number; file?: File }>).detail;
+  if (gen !== activeGen || activeWorkPhase !== getBatchPhase()) return;
+  if (editingBatchResult) {
+    fileHeader.hidden = false; document.body.classList.add('document-loaded');
+    filenameLabel.textContent = editingBatchResult.file.name; filenameLabel.title = editingBatchResult.file.name;
+  }
 
   const phase = getBatchPhase();
   if (phase === 'scan') {

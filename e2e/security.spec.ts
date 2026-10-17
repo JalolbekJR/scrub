@@ -32,7 +32,7 @@ test('synthetic PDF export is raster-only and a failed next upload clears downlo
   await expect(page.locator('#controlsResult')).toBeVisible({ timeout: 90000 });
   await expect(page.locator('#controlsResult')).not.toHaveClass(/scanning/, { timeout: 90000 });
   await page.locator('#btnRedact').click();
-  await expect(page.locator('#btnDownload')).toBeEnabled({ timeout: 60000 });
+  await expect(page.locator('#celebrateBackdrop')).toBeVisible({ timeout: 60000 });
 
   const downloadPromise = page.waitForEvent('download');
   await page.locator('#celebDownload').click();
@@ -54,7 +54,7 @@ test('synthetic PDF export is raster-only and a failed next upload clears downlo
   await page.locator('#fileInput').setInputFiles({
     name: 'broken.pdf', mimeType: 'application/pdf', buffer: Buffer.from('not a PDF'),
   });
-  await expect(page.locator('#btnDownload')).toBeDisabled();
+  await expect(page.locator('#btnRedact')).not.toHaveAttribute('data-export-state', 'verified');
   await expect(page.locator('#canvasArea')).toBeHidden();
   expect(externalRequests).toEqual([]);
 });
@@ -70,7 +70,7 @@ test('a failed required face detector blocks image export', async ({ page }) => 
   await expect(page.locator('#controlsResult')).toContainText('face detection failed', { timeout: 60000 });
   await page.locator('#btnRedact').click();
   await expect(page.locator('#statusText')).toContainText('Export blocked');
-  await expect(page.locator('#btnDownload')).toBeDisabled();
+  await expect(page.locator('#btnRedact')).not.toHaveAttribute('data-export-state', 'verified');
   await expect(page.locator('#celebrateBackdrop')).toBeHidden();
 });
 

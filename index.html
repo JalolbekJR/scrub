@@ -20,7 +20,7 @@
           <span class="badge-dot"></span>
           Runs entirely in your browser · Zero uploads · Free forever
         </div>
-        <h1 class="hero-title">Scrub</h1>
+        <h1 class="hero-title"><a id="landingLogo" href="#" aria-label="Scrub home">Scrub</a></h1>
         <p class="hero-subtitle">Drop a photo or PDF. Detect faces &amp; private info. Review masks and download a verified export. <strong>Nothing is uploaded — ever.</strong></p>
         <p class="hero-transparency">
           🔒 Online or offline, your files never leave this device —
@@ -237,12 +237,9 @@
           </div>
 
           <div class="controls-actions">
-            <button class="btn btn-primary" id="btnRedact" aria-label="Redact selected items">
+            <button class="btn btn-primary" id="btnRedact" aria-label="Download protected copy" disabled>
               <span class="btn-text">Redact selected</span>
               <span class="btn-check" aria-hidden="true">&#10003;</span>
-            </button>
-            <button class="btn btn-secondary" id="btnDownload" aria-label="Download verified copy" disabled>
-              Download verified copy
             </button>
           </div>
         </div>
@@ -307,15 +304,15 @@
         <div class="batch-file-list" id="batchFileList"></div>
         <p class="batch-modal-note">Each tag is on by default — untick anything you want to keep. Files are re-encoded clean and delivered as one ZIP.</p>
         <div class="batch-modal-actions">
-          <button class="btn btn-primary" id="btnBatchRedact">Redact selected</button>
-          <button class="btn btn-secondary" id="btnBatchCancel">Cancel</button>
+          <button class="btn btn-primary" id="btnBatchRedact">Download protected copies</button>
+          <button class="btn btn-secondary" id="btnBatchCancel">Start over</button>
         </div>
       </div>
     </div>
 
     <!-- Success / support modal -->
     <div class="modal-backdrop" id="celebrateBackdrop" hidden>
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="celebTitle" id="celebrateModal">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="celebTitle" aria-describedby="celebSummary" id="celebrateModal">
         <button class="modal-close" id="celebClose" aria-label="Close dialog">&#10005;</button>
 
         <div class="celeb-check" aria-hidden="true">
@@ -325,12 +322,14 @@
           </svg>
         </div>
 
-        <h2 class="celeb-title" id="celebTitle">Verified export ready</h2>
+        <h2 class="celeb-title" id="celebTitle">Download started</h2>
         <p class="celeb-sub" id="celebSummary"></p>
+        <details class="celeb-check-details"><summary>What Scrub checked</summary><p id="celebTechnical"></p></details>
 
         <div class="celeb-breakdown" id="celebBreakdown" hidden></div>
 
-        <button class="btn btn-primary celeb-download" id="celebDownload">Download verified copy</button>
+        <button class="btn btn-primary celeb-download" id="celebEdit" type="button">Clean another file</button>
+        <button class="btn btn-secondary celeb-retry" id="celebDownload" type="button">Download again</button>
 
         <div class="celeb-divider"><span>and if Scrub helped you…</span></div>
 
@@ -343,7 +342,6 @@
 
         <p class="celeb-gratitude" id="celebGratitude" hidden></p>
         <button class="celeb-later" id="celebLater" type="button">Maybe later</button>
-        <button class="celeb-later" id="celebEdit" type="button">Back to editing</button>
         <p class="celeb-foot">No account · no tracking · Scrub is free forever.</p>
       </div>
     </div>

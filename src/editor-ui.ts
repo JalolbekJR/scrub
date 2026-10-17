@@ -19,7 +19,7 @@ export function initEditor(access: EditorAccess) {
   stage.append(toolbar, document.getElementById('singleCanvasWrap')!, document.getElementById('scrubberWrap')!);
   document.getElementById('canvasArea')!.append(stage, panel);
   let selected: string | null = null;
-  let customizing = false, advancedOpen = false;
+  let customizing = false, advancedOpen = false, listOpen = false;
   let tool: 'select' | 'rectangle' | 'ellipse' | 'brush' | 'eraser' = 'select';
   let brushSize = 32;
   let gesture: { pointer: number; start: { x: number; y: number }; box?: BoundingBox; resize: boolean; draft: HTMLElement; points: { x: number; y: number }[] } | null = null;
@@ -69,6 +69,13 @@ export function initEditor(access: EditorAccess) {
   function setCustomization(enabled: boolean) {
     customizing = enabled; toolbar.hidden = !enabled;
     document.body.classList.toggle('editing-active', enabled);
+    // Review outlines are keyboard buttons; editing exposes separate delete
+    // controls and the accessible region list, without nested button roles.
+    for (const box of overlay.querySelectorAll<HTMLElement>('.detection-box[data-region-id]')) {
+      if (enabled) { box.removeAttribute('role'); box.removeAttribute('tabindex'); }
+      else { box.setAttribute('role', 'button'); box.tabIndex = 0; }
+      for (const control of box.querySelectorAll<HTMLButtonElement>('.detection-box-del')) control.hidden = !enabled;
+    }
     if (!enabled) setTool('select');
     const toggle = document.getElementById('customize');
     toggle?.setAttribute('aria-expanded', String(enabled));
@@ -76,7 +83,8 @@ export function initEditor(access: EditorAccess) {
   }
   function select(id: string) {
     selected = id; refresh();
-    if (window.matchMedia('(max-width: 899px)').matches) { panel.classList.add('sheet-open'); document.getElementById('regionKeep')?.focus(); }
+    panel.classList.add('sheet-open');
+    document.getElementById('regionKeep')?.focus({ preventScroll: true });
   }
   function refresh() {
     const focusedId = content.contains(document.activeElement) ? (document.activeElement as HTMLElement).id : '';
@@ -86,9 +94,12 @@ export function initEditor(access: EditorAccess) {
     undo.disabled = !state?.canUndo; redo.disabled = !state?.canRedo;
     access.render(selected);
     content.replaceChildren();
-    const heading = document.createElement('h2'); heading.textContent = `Regions · page ${access.pageNumber()}`; content.append(heading);
+    const heading = document.createElement('h2'); heading.textContent = selected ? 'Selected cover' : 'Review regions'; content.append(heading);
     const summary = document.createElement('p'); summary.className = 'region-summary'; summary.textContent = `${regions.filter(r => r.included).length} included / ${regions.length} suggestions and manual masks`; content.append(summary);
-    const list = document.createElement('div'); list.className = 'region-list'; content.append(list);
+    const browser = document.createElement('details'); browser.className = 'region-browser'; browser.open = listOpen;
+    const title = document.createElement('summary'); title.textContent = `All regions (${regions.length})`; browser.append(title);
+    browser.ontoggle = () => { if (browser.isConnected) listOpen = browser.open; };
+    const list = document.createElement('div'); list.className = 'region-list'; browser.append(list); content.append(browser);
     const counts: Record<string, number> = {};
     for (const r of regions) {
       const ordinal = counts[r.type] = (counts[r.type] ?? 0) + 1;
@@ -123,7 +134,7 @@ export function initEditor(access: EditorAccess) {
     const adjust = document.createElement('button'); adjust.type = 'button'; adjust.textContent = 'Adjust area'; adjust.className = 'adjust-area';
     adjust.onclick = () => {
       setCustomization(true); setTool('select');
-      if (window.matchMedia('(max-width: 899px)').matches) panel.classList.remove('sheet-open');
+      panel.classList.remove('sheet-open');
       container.scrollIntoView({ block: 'nearest' }); selectButton.focus();
     };
     properties.append(adjust);
@@ -145,7 +156,7 @@ export function initEditor(access: EditorAccess) {
     if (region.type === 'manual') {
       const remove = document.createElement('button'); remove.textContent = 'Delete manual mask'; remove.onclick = () => { state.remove(region.id); committed(); }; properties.append(remove);
     }
-    if (window.matchMedia('(max-width: 899px)').matches) content.insertBefore(properties, list);
+    content.insertBefore(properties, browser);
     if (focusedId) document.getElementById(focusedId)?.focus();
   }
   function point(e: PointerEvent) {
@@ -237,6 +248,7 @@ export function initEditor(access: EditorAccess) {
   container.addEventListener('lostpointercapture', cancel);
   container.addEventListener('pointerleave', () => { cursor.hidden = true; });
   setTool('select');
-  return { refresh, cancel, select, setCustomization, isCustomizing: () => customizing,
-    reset: () => { cancel(); selected = null; advancedOpen = false; setCustomization(false); } };
+  return { refresh, cancel, select, setCustomization,
+    showList: () => { listOpen = true; panel.classList.add('sheet-open'); refresh(); content.querySelector<HTMLElement>('.region-browser summary')?.focus(); }, isCustomizing: () => customizing,
+    reset: () => { cancel(); selected = null; advancedOpen = false; listOpen = false; panel.classList.remove('sheet-open'); setCustomization(false); } };
 }

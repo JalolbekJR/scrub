@@ -21,6 +21,12 @@ Set `SCRUB_TEST_BROWSER` to `chromium` (default), `firefox` or `webkit`. WebKit 
 
 This harness does not verify Cloudflare's deployed responses. Chrome CDP touch-drag/cancel injection is skipped in other engines; ordinary pointer, keyboard, layout and export checks still run. Keep logs and downloaded evidence local. Do not use private fixtures in public reports.
 
+## Review and completion regressions
+
+The main review action prepares and verifies the current revision, initiates an ordinary browser download, restores the original home and opens the optional completion window. Tests cover direct region selection, the accessible region list, view-only zoom, unfinished-edit confirmation, scan cancellation, blocked-download retry reuse and revision changes during verification. A ten-tile public-domain photographic fixture checks individual face choices against downloaded pixels.
+
+Completion retains only the verified output for retry, for at most five minutes while the window is open. Dismissal, another upload or expiry clears it. An initiated browser download owns its separate temporary URL; returning home does not revoke it early. Tests inspect actual JPEG/PDF/ZIP files and URL cleanup. A browser download event does not establish that the operating system finished saving.
+
 ## Manual release checks
 
 - Actual iPhone/Safari and Android/Chrome: upload through the native picker, scroll without moving masks, edit each tool, navigate PDFs, preview and save JPEG/PDF/ZIP. Check safe-area controls and browser download behavior.

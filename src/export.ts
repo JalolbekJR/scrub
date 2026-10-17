@@ -6,7 +6,6 @@ import type { Detection, DetectionType } from './types';
 import { LIMITS, effectiveMaxPdfPages, safeScale } from './validate';
 
 const mainCanvas = document.getElementById('mainCanvas') as HTMLCanvasElement;
-const btnDownload = document.getElementById('btnDownload') as HTMLButtonElement;
 
 const redactedPages = new Map<number, string>(); // pageNum → dataURL
 interface ReviewedPage { detections: Detection[]; width: number; height: number; }
@@ -68,10 +67,6 @@ export function storeRedactedPage(pageNum: number, canvas: HTMLCanvasElement) {
 
 export function getRedactedPage(doc: PDFDocumentProxy, pageNum: number): string | undefined {
   return pdfDoc === doc ? redactedPages.get(pageNum) : undefined;
-}
-
-export function enableDownload() {
-  btnDownload.disabled = false;
 }
 
 function blobFromCanvas(canvas: HTMLCanvasElement, quality = 0.95): Promise<Blob> {

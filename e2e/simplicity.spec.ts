@@ -1,3 +1,4 @@
+import { blockNextDownload, openRegions } from './editor-controls';
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 
@@ -31,14 +32,17 @@ test('Retry scan preserves edits and requires fresh verification', async ({ page
   await expect(page.locator('#btnRedact')).toBeEnabled({ timeout: 60000 });
   await page.locator('#customize').click(); await page.locator('#btnDraw').click(); await page.locator('#addShape').click();
   await expect(page.locator('.detection-box.manual')).toHaveCount(1);
+  await openRegions(page);
   await page.locator('#regionColor').fill('#112233'); await page.locator('#regionColor').dispatchEvent('change');
-  await page.locator('#btnRedact').click(); await expect(page.locator('#celebrateBackdrop')).toBeVisible({ timeout: 60000 }); await page.keyboard.press('Escape');
+  await blockNextDownload(page);
+  await page.locator('#btnRedact').click(); await expect(page.locator('#btnRedact')).toHaveAttribute('data-export-state', 'verified', { timeout: 60000 });
   let confirmations = 0; page.once('dialog', async dialog => { confirmations++; await dialog.dismiss(); });
   await page.locator('#retryScan').click();
-  expect(confirmations).toBe(0); await expect(page.locator('#btnDownload')).toBeDisabled();
+  expect(confirmations).toBe(0); await expect(page.locator('#btnRedact')).not.toHaveAttribute('data-export-state', 'verified');
   await expect(page.locator('#btnRedact')).toBeEnabled({ timeout: 60000 });
   await expect(page.locator('.detection-box.manual')).toHaveCount(1);
   await page.locator('#customize').click(); await expect(page.locator('#editorUndo')).toBeEnabled();
+  await openRegions(page);
   await page.getByRole('button', { name: 'Manual 1, page 1', exact: true }).click();
   await expect(page.locator('#regionColor')).toHaveValue('#112233');
 });
@@ -84,7 +88,7 @@ test('reduced motion leaves helpful static text and incomplete scans do not clai
   await expect(page.locator('#scannerLog')).not.toContainText('done —');
 });
 
-test('small-screen support dialog keeps download primary and external actions optional', async ({ page }) => {
+test('small-screen completion keeps clean another file primary and external actions optional', async ({ page }) => {
   await page.addInitScript(() => {
     const calls: string[] = []; (window as Window & { supportCalls?: string[] }).supportCalls = calls;
     window.open = url => { calls.push(String(url)); return null; };
@@ -97,12 +101,14 @@ test('small-screen support dialog keeps download primary and external actions op
   await page.locator('#celebrateModal').evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished)));
   const bounds = (await page.locator('#celebrateModal').boundingBox())!;
   expect(bounds.y).toBeGreaterThanOrEqual(12); expect(bounds.y + bounds.height).toBeLessThanOrEqual(556);
+  await expect(page.locator('#celebEdit')).toHaveClass(/btn-primary/);
   const calls = () => page.evaluate(() => (window as Window & { supportCalls?: string[] }).supportCalls);
   expect(await calls()).toEqual([]);
   for (const id of ['celebStar', 'celebShare', 'celebSupport']) await page.locator(`#${id}`).click();
   expect((await calls())?.map(url => new URL(url).hostname)).toEqual(['github.com', 'twitter.com', 'boosty.to']);
   const pending = page.waitForEvent('download'); await page.locator('#celebDownload').click();
   const download = await pending; expect(readFileSync(await download.path()).subarray(0, 3)).toEqual(Buffer.from([255, 216, 255]));
+  await page.locator('#celebEdit').click();
   await expect(page.locator('#celebrateBackdrop')).toBeHidden();
 });
 
@@ -129,21 +135,23 @@ test('simple review reveals customization without losing edits or verified-revis
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
   await page.mouse.move(box.x + box.width / 2 + 30, box.y + box.height / 2 + 30); await page.mouse.up();
   expect(await mask.evaluate(el => [el.style.left, el.style.top])).toEqual(originalPosition);
+  await openRegions(page);
   await page.getByRole('button', { name: 'Face 1, page 1', exact: true }).click();
   await expect(page.locator('#region-width')).toBeHidden();
+  await openRegions(page);
   await page.locator('#regionStyle').selectOption('soft');
   await page.locator('#customize').click();
   await expect(page.locator('.editor-toolbar')).toBeVisible();
   await page.locator('#customize').click();
   await expect(page.locator('#regionStyle')).toHaveValue('soft');
-  await page.locator('#btnRedact').click();
-  await expect(page.locator('#celebrateBackdrop')).toBeVisible({ timeout: 60000 });
-  for (const id of ['celebDownload', 'celebStar', 'celebShare', 'celebCopy', 'celebSupport', 'celebLater', 'celebEdit']) await expect(page.locator(`#${id}`)).toBeVisible();
-  await page.locator('#celebEdit').click();
-  await expect(page.locator('#celebrateBackdrop')).toBeHidden();
+  await page.locator('#customize').click();
+  await page.locator('#previewToggle').click();
+  await expect(page.locator('#scrubberWrap')).toBeVisible();
+  await page.locator('#previewToggle').click();
   await expect(page.locator('#mainCanvas')).toBeVisible();
+  await openRegions(page);
   await page.getByRole('checkbox', { name: 'Redact Face 1, page 1', exact: true }).uncheck();
-  await expect(page.locator('#btnDownload')).toBeDisabled();
+  await expect(page.locator('#btnRedact')).not.toHaveAttribute('data-export-state', 'verified');
   await expect(page.locator('#regionStyle')).toHaveValue('soft');
   await page.setViewportSize({ width: 390, height: 844 }); await page.locator('#showRegions').click();
   await page.getByRole('button', { name: 'Adjust area', exact: true }).click();

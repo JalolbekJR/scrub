@@ -85,10 +85,14 @@ try {
     await expect(page.locator('#btnRedact')).toBeEnabled({ timeout: 90000 });
   }
   async function download() {
-    await page.locator('#btnRedact').click(); await expect(page.locator('#celebDownload')).toBeVisible({ timeout: 90000 });
-    for (const id of ['celebStar', 'celebShare', 'celebCopy', 'celebSupport', 'celebLater', 'celebEdit']) await expect(page.locator(`#${id}`)).toBeVisible();
-    const pending = page.waitForEvent('download'); await page.locator('#celebDownload').click();
-    const output = await pending; return { bytes: readFileSync(await output.path()), name: output.suggestedFilename() };
+    const pending = page.waitForEvent('download'); await page.locator('#btnRedact').click();
+    const output = await pending;
+    await expect(page.locator('#celebDownload')).toBeVisible({ timeout: 90000 });
+    await expect(page.locator('.hero')).toBeVisible(); await expect(page.locator('#onboarding')).toBeVisible();
+    await expect(page.locator('#canvasArea')).toBeHidden(); await expect(page.locator('.detection-box')).toHaveCount(0);
+    await expect(page.locator('#celebTitle')).toHaveText('Download started');
+    for (const id of ['celebStar', 'celebShare', 'celebCopy', 'celebSupport', 'celebLater', 'celebEdit']) await expect(page.locator('#' + id)).toBeVisible();
+    return { bytes: readFileSync(await output.path()), name: output.suggestedFilename() };
   }
   async function jpeg(output, expected) {
     expect(output.bytes.subarray(0, 3)).toEqual(Buffer.from([255, 216, 255])); expect(output.name).toMatch(/\.jpg$/);
@@ -123,12 +127,10 @@ try {
     const original = await page.evaluate(async () => Array.from(new Uint8Array(await window.uploadedFiles[0].arrayBuffer())));
     expect(Buffer.from(original)).toEqual(Buffer.from(image.data, 'base64'));
     if (extension === 'jpeg') {
-      const repeat = page.waitForEvent('download'); await page.locator('#btnDownload').click();
+      const repeat = page.waitForEvent('download'); await page.locator('#celebDownload').click();
       const again = await repeat; expect(readFileSync(await again.path())).toEqual(output.bytes);
       let unexpected = 0; const observe = () => unexpected++; page.on('download', observe);
-      await page.getByText('Category bulk controls', { exact: true }).click(); await page.locator('#chkEmails').uncheck();
-      await expect(page.locator('#btnDownload')).toBeDisabled();
-      await page.locator('#btnDownload').evaluate(button => button.click());
+      await page.locator('#celebClose').click(); await page.locator('#celebDownload').dispatchEvent('click');
       await page.waitForTimeout(100); expect(unexpected).toBe(0); page.off('download', observe);
     }
     results.push({ input: extension, output: 'JPEG', bytes: output.bytes.length, totalMs: Math.round(performance.now() - started) });
@@ -145,8 +147,8 @@ try {
     results.push({ input: 'PDF', pages, bytes: output.bytes.length, totalMs: Math.round(performance.now() - started) });
   }
   await page.locator('#fileInput').setInputFiles([{ name: 'ordinary.pdf', mimeType: 'application/pdf', buffer: makePdf(2) }, { name: 'portrait.png', mimeType: 'image/png', buffer: readFileSync('fixtures/astronaut.png') }]);
-  await expect(page.locator('#batchBackdrop')).toBeVisible(); await page.locator('#btnBatchRedact').click(); await expect(page.locator('#celebDownload')).toBeVisible();
-  const pending = page.waitForEvent('download'); await page.locator('#celebDownload').click(); const output = await pending, bytes = readFileSync(await output.path()); expect(output.suggestedFilename()).toBe('scrubbed-bundle.zip');
+  await expect(page.locator('#batchBackdrop')).toBeVisible({ timeout: 90000 });
+  const pending = page.waitForEvent('download'); await page.locator('#btnBatchRedact').click(); const output = await pending, bytes = readFileSync(await output.path()); expect(output.suggestedFilename()).toBe('scrubbed-bundle.zip');
   const entries = unzipSync(bytes); expect(Object.keys(entries)).toHaveLength(2);
   for (const [name, bytes] of Object.entries(entries)) { if (name.endsWith('.pdf')) await pdf(bytes, 2); else await jpeg({ name, bytes: Buffer.from(bytes) }, { width: 512, height: 512 }); }
   results.push({ input: 'mixed batch', entries: Object.keys(entries), bytes: bytes.length });
@@ -154,14 +156,15 @@ try {
   await upload({ name: 'retry.png', mimeType: 'image/png', buffer: readFileSync('fixtures/astronaut.png') });
   await page.evaluate(() => { HTMLCanvasElement.prototype.toBlob = () => { throw new Error('Synthetic export failure'); }; });
   let failedDownloads = 0; page.on('download', () => failedDownloads++);
-  await page.locator('#btnRedact').click(); await expect(page.locator('#btnDownload')).toBeDisabled();
+  await page.locator('#btnRedact').click(); await expect(page.locator('#canvasArea')).toBeVisible();
   await expect(page.locator('#statusText')).toContainText(/failed|could not|error/i);
-  await page.locator('#btnDownload').evaluate(button => button.click());
+  await expect(page.locator('#btnRedact')).not.toHaveAttribute('data-export-state', 'verified');
+  await expect(page.locator('#celebrateBackdrop')).toBeHidden();
   await page.waitForTimeout(100); expect(failedDownloads).toBe(0);
   // Advancing the clock verifies every download URL is eventually released.
   await page.clock.runFor(61000);
   const audit = await page.evaluate(() => window.downloadAudit);
-  expect(dialogs).toHaveLength(1);
+  expect(dialogs).toHaveLength(0);
   expect(audit.permissions).toBe(0); expect(audit.downloads).toHaveLength(9);
   for (const download of audit.downloads) {
     expect(audit.revoked.filter(url => url === download.url)).toHaveLength(1);
