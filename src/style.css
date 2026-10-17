@@ -1900,7 +1900,7 @@ body.document-loaded .canvas-area { grid-template-columns:minmax(0,1fr); }
 body:not(.editing-active):not(.is-preview) #previewToggle { display:none; }
 body:not(.editing-active) .detection-box-del { display:none; }
 .detection-box:focus-visible { outline:3px solid var(--primary); outline-offset:4px; }
-.celeb-retry { width:100%; min-height:44px; margin-top:8px; }
+.celeb-retry { width:100%; min-height:44px; margin-top:8px; justify-content:center; }
 .celeb-check-details { font-size:13px; margin:12px 0; }
 .celeb-check-details summary { cursor:pointer; min-height:44px; padding:12px; }
 .celeb-check-details p { line-height:1.5; margin:8px 0; color:var(--text-secondary); }
