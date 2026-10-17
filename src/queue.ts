@@ -9,6 +9,12 @@ let scanResults: ScanResult[] = [];
 let redactIndex = 0;
 let done = 0;
 let total = 0;
+let nextTimer: ReturnType<typeof setTimeout> | undefined;
+export function resetQueue() {
+  clearTimeout(nextTimer); nextTimer = undefined;
+  q = []; allFiles = []; scanResults = []; batchPhase = 'none';
+  done = 0; total = 0; redactIndex = 0;
+}
 
 let onNext:           ((file: File) => void) | null = null;
 let onProgress:       ((done: number, total: number) => void) | null = null;
@@ -34,6 +40,7 @@ export function initQueue(
 
 export function enqueue(files: File[]) {
   if (files.length === 0) return;
+  resetQueue();
   if (files.length === 1) {
     batchPhase = 'none';
     q = []; allFiles = []; scanResults = [];
@@ -52,11 +59,12 @@ export function enqueue(files: File[]) {
 }
 
 export function fileScanned(result: ScanResult) {
+  if (batchPhase !== 'scan') return;
   scanResults.push(result);
   done++;
   if (q.length > 0) {
     onProgress?.(done, total);
-    setTimeout(processNext, 300);
+    nextTimer = setTimeout(processNext, 300);
   } else {
     onScanComplete?.(scanResults);
     batchPhase = 'none';
@@ -83,11 +91,12 @@ function processNext() {
 }
 
 export function fileFinished() {
+  if (batchPhase !== 'redact') return;
   done++;
   redactIndex++;
   onProgress?.(done, total);
   if (q.length > 0) {
-    setTimeout(processNext, 600);
+    nextTimer = setTimeout(processNext, 600);
   } else {
     const wasRedact = batchPhase === 'redact';
     batchPhase = 'none';

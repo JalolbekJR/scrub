@@ -11,6 +11,12 @@ export interface Detection {
   type: DetectionType;
   bbox: BoundingBox;
   label?: string;
+  id?: string;
+  included?: boolean;
+  shape?: 'rectangle' | 'ellipse' | 'brush';
+  style?: 'solid' | 'gradient' | 'soft' | 'mosaic' | 'blur';
+  color?: string;
+  strokes?: { points: { x: number; y: number }[]; size: number; erase?: boolean }[];
 }
 
 export interface ScanResult {
@@ -22,6 +28,7 @@ export interface ScanResult {
   names: number;
   meta: number;
   detections: Detection[];
+  scanFailure?: string;
 }
 
 export type DetectorStatus = 'success' | 'failed' | 'disabled';

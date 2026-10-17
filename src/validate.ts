@@ -1,7 +1,13 @@
+import { rasterDimensions } from './image-size';
+
 export const LIMITS = {
   maxBytes: 40 * 1024 * 1024,
   maxDim: 12000,
   maxPixels: 40 * 1000 * 1000,
+  // Bound the source decode too; downscaling occurs only after native decoding.
+  maxSourcePixels: 80 * 1000 * 1000,
+  maxSourceDim: 32767,
+  imageHeaderBytes: 1024 * 1024,
   maxPdfPages: 50,
   maxPdfPagesMobile: 15,
   pdfRenderScale: 1.5,
@@ -89,6 +95,14 @@ export async function validateFile(file: File): Promise<Validation> {
   const kind = sniff(header);
   if (!kind) {
     return { ok: false, reason: `This file isn't a recognised image or PDF — its contents don't match a supported format. ${SUPPORTED}` };
+  }
+  if (kind === 'image') {
+    try {
+      const { width, height } = rasterDimensions(new Uint8Array(await file.slice(0, LIMITS.imageHeaderBytes).arrayBuffer()));
+      if (width <= 0 || height <= 0 || width > LIMITS.maxSourceDim || height > LIMITS.maxSourceDim || width * height > LIMITS.maxSourcePixels) {
+        return { ok: false, reason: 'Image dimensions exceed the source decode limit (80 million pixels; 32767 pixels per side). Resize it before opening.' };
+      }
+    } catch { return { ok: false, reason: 'Image dimensions are malformed or outside the supported header inspection budget.' }; }
   }
   return { ok: true, kind };
 }

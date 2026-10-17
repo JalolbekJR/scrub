@@ -2,7 +2,7 @@ import type { BoundingBox } from './types';
 
 // Pad boxes outward a little so edge pixels don't leak, but stay tight to the
 // detected region — a face box should cover the face, not the area around it.
-function padBox(box: BoundingBox, canvasW: number, canvasH: number): BoundingBox {
+export function paddedBox(box: BoundingBox, canvasW: number, canvasH: number): BoundingBox {
   const padX = Math.max(8, Math.round(box.width * 0.12));
   const padY = Math.max(8, Math.round(box.height * 0.12));
   const x = Math.max(0, Math.floor(box.x - padX));
@@ -12,39 +12,16 @@ function padBox(box: BoundingBox, canvasW: number, canvasH: number): BoundingBox
   return { x, y, width: right - x, height: bottom - y };
 }
 
-// Block size scales to the region (~6 cells across) so large faces collapse
-// to a handful of flat averaged cells with no recoverable structure.
+// Replace pixels independently of source color and alpha. putImageData avoids
+// inheriting transforms, opacity, shadows or compositing from the caller.
 export function redactPixels(ctx: CanvasRenderingContext2D, rawBox: BoundingBox) {
-  const { x, y, width, height } = padBox(rawBox, ctx.canvas.width, ctx.canvas.height);
+  if (![rawBox.x, rawBox.y, rawBox.width, rawBox.height].every(Number.isFinite)
+      || rawBox.width <= 0 || rawBox.height <= 0) throw new Error('Invalid redaction box');
+  const { x, y, width, height } = paddedBox(rawBox, ctx.canvas.width, ctx.canvas.height);
   if (width <= 0 || height <= 0) return;
-
-  const imageData = ctx.getImageData(x, y, width, height);
-  const data = imageData.data;
-  const w = imageData.width;
-  const h = imageData.height;
-  const block = Math.max(14, Math.min(120, Math.round(Math.min(w, h) / 6)));
-
-  for (let by = 0; by < h; by += block) {
-    for (let bx = 0; bx < w; bx += block) {
-      const bw = Math.min(block, w - bx);
-      const bh = Math.min(block, h - by);
-      let r = 0, g = 0, b = 0, count = 0;
-      for (let py = 0; py < bh; py++) {
-        for (let px = 0; px < bw; px++) {
-          const idx = ((by + py) * w + (bx + px)) * 4;
-          r += data[idx]; g += data[idx + 1]; b += data[idx + 2]; count++;
-        }
-      }
-      const ar = r / count, ag = g / count, ab = b / count;
-      for (let py = 0; py < bh; py++) {
-        for (let px = 0; px < bw; px++) {
-          const idx = ((by + py) * w + (bx + px)) * 4;
-          data[idx] = ar; data[idx + 1] = ag; data[idx + 2] = ab;
-        }
-      }
-    }
-  }
-  ctx.putImageData(imageData, x, y);
+  const pixels = ctx.createImageData(width, height);
+  for (let i = 3; i < pixels.data.length; i += 4) pixels.data[i] = 255;
+  ctx.putImageData(pixels, x, y);
 }
 
 export function redactAll(canvas: HTMLCanvasElement, boxes: BoundingBox[]) {

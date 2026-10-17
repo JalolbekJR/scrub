@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="referrer" content="no-referrer" />
     <title>Scrub — Privacy Redactor</title>
-    <meta name="description" content="Drop a file. Scrub detects faces and private info. Download the clean version. Nothing is uploaded — ever." />
+    <meta name="description" content="Drop a file. Scrub detects faces and private info. Review masks and download a verified export. Nothing is uploaded — ever." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
   <body>
@@ -20,8 +20,8 @@
           <span class="badge-dot"></span>
           Runs entirely in your browser · Zero uploads · Free forever
         </div>
-        <h1 class="hero-title">Scrub</h1>
-        <p class="hero-subtitle">Drop a photo or PDF. Detect faces &amp; private info. Download the clean version. <strong>Nothing is uploaded — ever.</strong></p>
+        <h1 class="hero-title"><a id="landingLogo" href="#" aria-label="Scrub home">Scrub</a></h1>
+        <p class="hero-subtitle">Drop a photo or PDF. Detect faces &amp; private info. Review masks and download a verified export. <strong>Nothing is uploaded — ever.</strong></p>
         <p class="hero-transparency">
           🔒 Online or offline, your files never leave this device —
           <strong>nothing is uploaded to any server</strong>. See it for yourself in your browser's DevTools → Network tab.
@@ -72,21 +72,21 @@
               <span class="step-num">1</span>
               <div class="step-body">
                 <h3 class="step-title">Drop a file</h3>
-                <p class="step-text">Any image or PDF. It's opened locally in your browser — never uploaded.</p>
+                <p class="step-text">Choose a photo or PDF. It stays on your device.</p>
               </div>
             </li>
             <li class="step">
               <span class="step-num">2</span>
               <div class="step-body">
                 <h3 class="step-title">Review what's found</h3>
-                <p class="step-text">Faces, emails, phones, cards &amp; names are boxed. Hidden metadata, GPS and embedded threats are listed too.</p>
+                <p class="step-text">Review the suggestions and choose what to hide. Cover anything Scrub missed.</p>
               </div>
             </li>
             <li class="step">
               <span class="step-num">3</span>
               <div class="step-body">
                 <h3 class="step-title">Download clean</h3>
-                <p class="step-text">Pixels are destroyed and re-encoded with zero metadata — and Scrub verifies it for you.</p>
+                <p class="step-text">Download your protected copy after Scrub checks the export.</p>
               </div>
             </li>
           </ol>
@@ -168,7 +168,7 @@
           <div class="single-canvas-wrap" id="singleCanvasWrap">
             <div class="canvas-container" id="mainContainer">
               <canvas id="mainCanvas" aria-label="Image preview"></canvas>
-              <div class="overlay-wrap" id="overlayWrap" aria-hidden="true"></div>
+              <div class="overlay-wrap" id="overlayWrap"></div>
             </div>
           </div>
         </div>
@@ -176,11 +176,11 @@
         <!-- Forensic hidden-data scan -->
         <div class="forensics-panel" id="forensicsPanel" hidden aria-live="polite">
           <div class="forensics-head">
-            <h2 class="forensics-title">Hidden data &amp; threat scan</h2>
+            <h2 class="forensics-title">Original file</h2>
             <span class="forensics-summary" id="forensicsSummary"></span>
           </div>
           <p class="forensics-privacy" id="forensicsPrivacy">
-            <span aria-hidden="true">🔒</span> Values are never shown, stored, or logged — Scrub reports only <em>what</em> was found, then destroys it. File-system properties (owner, dates) live on your disk, <em>not inside</em> the image, and aren't shared.
+            <span aria-hidden="true">🔒</span> Metadata values are not displayed or logged. Scrub reports categories and sanitizes the exported copy. File-system properties (owner, dates) live on your disk, <em>not inside</em> the image, and aren't shared.
           </p>
           <ul class="forensics-list" id="forensicsList"></ul>
           <div class="forensics-verify" id="forensicsVerify" hidden></div>
@@ -191,10 +191,10 @@
           <div class="controls-section">
             <h2 class="controls-title">Detect &amp; Redact</h2>
             <p class="controls-result" id="controlsResult" aria-live="polite" hidden></p>
-            <p class="controls-hint">Untick anything you want to keep. Selected items are <strong>pixelated into the image</strong> — never just covered over.</p>
+            <p class="controls-hint">Untick anything you want to keep. Selected pixels are <strong>replaced with opaque masks</strong> in the exported image. Review for anything detection missed.</p>
             <div class="manual-tools">
               <button type="button" class="btn-draw" id="btnDraw" aria-pressed="false">✏ Draw redaction box</button>
-              <span class="manual-hint">Cover anything the scan missed. Click ✕ on a box to remove it.</span>
+              <span class="manual-hint">Select a region to adjust it. Excluded suggestions can be restored in Regions.</span>
             </div>
             <div class="checkbox-group" role="group" aria-label="Detection categories">
               <label class="check-item" id="itemFaces">
@@ -228,8 +228,8 @@
                 <span class="check-tip" role="tooltip">A full name ties the image to a real person and can be combined with other leaks to de-anonymise them.</span>
               </label>
               <label class="check-item check-item-meta" id="itemMeta">
-                <input type="checkbox" id="chkMetadata" checked />
-                <span class="check-label">Metadata &amp; hidden data <span class="count-badge" id="countMetadata"></span></span>
+                <span aria-hidden="true">&#10003;</span>
+                <span class="check-label">Metadata cleanup (always on) <span class="count-badge" id="countMetadata"></span></span>
                 <button type="button" class="check-info" aria-label="Why hidden data is risky" tabindex="0">i</button>
                 <span class="check-tip">Hidden EXIF/GPS, device serials, timestamps, embedded thumbnails and appended files — invisible to you, but they travel with the image and can pinpoint where and when it was taken.</span>
               </label>
@@ -237,12 +237,9 @@
           </div>
 
           <div class="controls-actions">
-            <button class="btn btn-primary" id="btnRedact" aria-label="Redact selected items">
+            <button class="btn btn-primary" id="btnRedact" aria-label="Download protected copy" disabled>
               <span class="btn-text">Redact selected</span>
               <span class="btn-check" aria-hidden="true">&#10003;</span>
-            </button>
-            <button class="btn btn-secondary" id="btnDownload" aria-label="Download clean copy" disabled>
-              Download clean copy
             </button>
           </div>
         </div>
@@ -293,8 +290,8 @@
         <strong>Full transparency:</strong> even on the hosted version at
         <span class="footer-host">scrub.learner0422.workers.dev</span>, every photo and PDF is opened, scanned, and
         scrubbed entirely inside your browser. Your files — and any faces, text, or metadata found in them — are
-        <strong>never uploaded, transmitted, logged, or stored anywhere</strong>: not on a server, not in a console,
-        not in this page. The only network request Scrub ever makes is an anonymous read of its own GitHub star count.
+        <strong>never uploaded</strong>. Files and edits are held in browser memory during processing.
+        App and detector assets are downloaded from this site; support links open only when you choose them.
         Don't take our word for it — open DevTools → Network and watch: your file never leaves your device.
       </p>
     </footer>
@@ -307,15 +304,15 @@
         <div class="batch-file-list" id="batchFileList"></div>
         <p class="batch-modal-note">Each tag is on by default — untick anything you want to keep. Files are re-encoded clean and delivered as one ZIP.</p>
         <div class="batch-modal-actions">
-          <button class="btn btn-primary" id="btnBatchRedact">Redact selected</button>
-          <button class="btn btn-secondary" id="btnBatchCancel">Cancel</button>
+          <button class="btn btn-primary" id="btnBatchRedact">Download protected copies</button>
+          <button class="btn btn-secondary" id="btnBatchCancel">Start over</button>
         </div>
       </div>
     </div>
 
     <!-- Success / support modal -->
     <div class="modal-backdrop" id="celebrateBackdrop" hidden>
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="celebTitle" id="celebrateModal">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="celebTitle" aria-describedby="celebSummary" id="celebrateModal">
         <button class="modal-close" id="celebClose" aria-label="Close dialog">&#10005;</button>
 
         <div class="celeb-check" aria-hidden="true">
@@ -325,12 +322,14 @@
           </svg>
         </div>
 
-        <h2 class="celeb-title" id="celebTitle">Your file is clean</h2>
+        <h2 class="celeb-title" id="celebTitle">Download started</h2>
         <p class="celeb-sub" id="celebSummary"></p>
+        <details class="celeb-check-details"><summary>What Scrub checked</summary><p id="celebTechnical"></p></details>
 
         <div class="celeb-breakdown" id="celebBreakdown" hidden></div>
 
-        <button class="btn btn-primary celeb-download" id="celebDownload">Download clean copy</button>
+        <button class="btn btn-primary celeb-download" id="celebEdit" type="button">Clean another file</button>
+        <button class="btn btn-secondary celeb-retry" id="celebDownload" type="button">Download again</button>
 
         <div class="celeb-divider"><span>and if Scrub helped you…</span></div>
 

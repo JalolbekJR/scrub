@@ -23,7 +23,7 @@ const PHASE_COPY: Record<Phase, { title: string; sub: string; log: string }> = {
   done:  { title: 'Scan complete',         sub: 'Nothing left your device',                       log: 'done — nothing left your device' },
 };
 
-const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // DOM
 let el: {
@@ -78,6 +78,7 @@ function frame() {
 
 function ease() {
   cancelAnimationFrame(raf);
+  if (reducedMotion()) { shown = target; frame(); return; }
   raf = requestAnimationFrame(frame);
 }
 
@@ -85,6 +86,8 @@ function ease() {
 const logLines: string[] = [];
 let typing = false;
 const typeQueue: string[] = [];
+let typeTimer: ReturnType<typeof setTimeout> | undefined;
+let collapseTimer: ReturnType<typeof setTimeout> | undefined;
 
 function renderLog() { dom().log.textContent = logLines.join('\n'); }
 
@@ -97,7 +100,7 @@ function pumpType() {
   logLines.push(prefix);
   if (logLines.length > 5) logLines.shift();
   const idx = logLines.length - 1;
-  if (reduceMotion) {
+  if (reducedMotion()) {
     logLines[idx] = prefix + next;
     renderLog(); typing = false; pumpType();
     return;
@@ -107,7 +110,7 @@ function pumpType() {
     logLines[idx] = prefix + next.slice(0, i);
     renderLog();
     if (i++ < next.length) {
-      setTimeout(tick, 18);
+      typeTimer = setTimeout(tick, 18);
     } else { typing = false; pumpType(); }
   };
   tick();
@@ -118,6 +121,7 @@ function logLine(text: string) { typeQueue.push(text); pumpType(); }
 // ── Public API ───────────────────────────────────────────────────────────────
 
 export function startScan() {
+  cancelScan(); logged.clear();
   const d = dom();
   logLines.length = 0; typeQueue.length = 0; typing = false;
   renderLog();
@@ -168,16 +172,29 @@ export function updateOcrProgress(progress: number) {
   setPhase('ocr', { progress });
 }
 
-export function finishScan() {
+export function finishScan(success = true) {
   const d = dom();
-  setPhase('done');
-  phaseLog('done');
+  clearTimeout(typeTimer); clearTimeout(collapseTimer); typeQueue.length = 0; typing = false;
+  if (success) setPhase('done');
+  else {
+    cancelAnimationFrame(raf); currentPhase = 'done';
+    d.phase.textContent = 'Scan incomplete'; d.sub.textContent = 'Some checks could not finish. Review the warning below.';
+    d.eta.textContent = ''; d.ringPct.textContent = '—';
+  }
+  logLines.push(`> ${success ? PHASE_COPY.done.log : 'scan incomplete — review the warning below'}`);
+  if (logLines.length > 5) logLines.shift(); renderLog();
   d.container?.classList.remove('scanning');
   // Briefly hold the completed ring, then collapse the scanner.
-  window.setTimeout(() => {
+  collapseTimer = setTimeout(() => {
     d.scanner.hidden = true;
     logged.clear();
-  }, reduceMotion ? 0 : 900);
+  }, reducedMotion() ? 0 : 900);
 }
 
 export function resetScanLog() { logged.clear(); }
+
+export function cancelScan() {
+  clearTimeout(typeTimer); clearTimeout(collapseTimer); cancelAnimationFrame(raf);
+  typeQueue.length = 0; typing = false; currentPhase = 'done';
+  dom().scanner.hidden = true; dom().container?.classList.remove('scanning');
+}
